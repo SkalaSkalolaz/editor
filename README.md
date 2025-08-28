@@ -189,6 +189,6 @@ This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICE
 
 ## Contact information
 
-If you have any questions or suggestions, please contact us at: [skala.skaloalz.1970@gmail.com].
+If you have any questions or suggestions, please contact us at: [skala.skalolaz.1970@gmail.com].
 
 Look [CREDITS.md](CREDITS.md) — thanks and information about dependencies.
