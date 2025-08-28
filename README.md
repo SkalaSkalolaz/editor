@@ -1,7 +1,7 @@
 # editor
 # Текстовый редактор
 
-[![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
+https://img.shields.io/badge/license-BSD%203--Clause-blue.svg
 
 Это текстовый редактор для работы в терминале, написанный на языке Go, с использованием библиотеки `tcell/v2` для работы с терминалом. Он поддерживает основные функции редактирования, синтаксическую подсветку для множества языков программирования и интеграцию с LLM (Large Language Models) через внешнюю программу `cogitor`.
 
