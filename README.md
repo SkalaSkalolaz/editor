@@ -88,6 +88,7 @@
 *   Код содержит комментарии на русском языке.
 *   Для работы с LLM используется внешняя команда `cogitor`. Если она недоступна, можно попробовать заменить её на `tgpt` (см. комментарии в функции `llmQuery`).
 *   Редактор имеет фиксированный размер окна (115x34), определяемый в коде (`contentWidth`, `contentHeight`).
+*   Проверка кода программы была произведена на ОС macOS 15.6 
 
 ## Контактная информация
 
@@ -184,6 +185,7 @@ This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICE
 *   The code contains comments in Russian.
 *   LLM interaction is handled via the external `cogitor` command. If unavailable, it can be replaced with `tgpt` (see comments in `llmQuery` function).
 *   The editor window size is fixed (115x34), specified in the code (`contentWidth`, `contentHeight`).
+*   The program code check was performed on macOS 15.6.
 
 ## Contact information
 
