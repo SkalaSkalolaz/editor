@@ -93,6 +93,8 @@
 
 Если есть вопросы или предложения обращайтесь по адресу: [skala.skalolaz.1970@gmail.com]
 
+Смотрите [CREDITS.md](CREDITS.md) — благодарности и информация о зависимостях.
+
 # Text editor
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
@@ -186,3 +188,5 @@ This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICE
 ## Contact information
 
 If you have any questions or suggestions, please contact us at: [skala.skaloalz.1970@gmail.com].
+
+Look [CREDITS.md](CREDITS.md) — thanks and information about dependencies.
