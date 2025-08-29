@@ -73,8 +73,8 @@ func printUsageExtended() {
 	fmt.Println("Особенности:")
 	fmt.Println("  - Терминальный текстовый редактор с поддержкой многострочного редактирования, курсорной навигации,")
 	fmt.Println("    отмены/повтора (undo/redo), вырезания/копирования/вставки, поиска, перехода к строке,")
-	fmt.Println("    и опциональной интеграции с LLM через cogitor.")
-	fmt.Println("  - Интеграция LLM: вызывается внешний cogitor при настройке provider/model.")
+	fmt.Println("    и опциональной интеграции с LLM через tgpt.")
+	fmt.Println("  - Интеграция LLM: вызывается внешний tgpt при настройке provider/model.")
 	fmt.Println()
 	fmt.Println("Горячие клавиши:")
 	fmt.Println("  Ctrl-S  Сохранить файл")
@@ -90,7 +90,7 @@ func printUsageExtended() {
 	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
 	fmt.Println()
 	fmt.Println("Примеры:")
-	fmt.Println("  editor -provider llm7 -model openai -path /path/to/file.txt")
+	fmt.Println("  editor --provider pollinations --model openai --path /path/to/file.txt")
 	fmt.Println("  editor file.txt")
 }
 
