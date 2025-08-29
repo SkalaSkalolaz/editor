@@ -13,7 +13,7 @@
 *   **Навигация:** Переход к определенной строке.
 *   **Отмена/повтор:** Поддержка операций отмены (`Undo`) и повтора (`Redo`) действий.
 *   **Буфер обмена:** Вырезание, копирование и вставка текста (используется системный буфер обмена через библиотеку `atotto/clipboard`).
-*   **Интеграция с LLM:** Возможность отправки инструкций и текста из редактора во внешнюю программу `cogitor` для взаимодействия с LLM. Данные из буфера обмена и видимая часть текста могут автоматически добавляться к запросу.
+*   **Интеграция с LLM:** Возможность отправки инструкций и текста из редактора во внешнюю программу `tgpt` для взаимодействия с LLM. Данные из буфера обмена и видимая часть текста могут автоматически добавляться к запросу.
 *   **Статусная строка:** Отображение имени файла, языка, номера строки и столбца, а также подсказок по горячим клавишам.
 
 ## Установка
@@ -31,7 +31,7 @@
     ```bash
     go build -o editor main.go # Замените main.go на путь к файлу с кодом, если он другой
     ```
-4.  Для работы с LLM необходимо установить и настроить внешнюю программу `cogitor` (или изменить код для использования другой программы, например, `tgpt`, как указано в комментариях).
+4.  Для работы с LLM необходимо установить и настроить внешнюю программу `tgpt` (или изменить код для использования другой программы, как указано в комментариях).
 
 ## Использование
 
@@ -62,7 +62,7 @@
 *   **Ctrl-K:** Вырезать текущую строку.
 *   **Ctrl-O:** Открыть файл.
 *   **Ctrl-N:** Создать новый файл.
-*   **Ctrl-L:** Отправить инструкцию LLM (через `cogitor`).
+*   **Ctrl-L:** Отправить инструкцию LLM (через `tgpt`).
 *   **Стрелки:** Перемещение курсора.
 *   **Home/End:** Перемещение в начало/конец строки.
 *   **PgUp/PgDn:** Перемещение на страницу вверх/вниз.
@@ -71,7 +71,7 @@
 
 ## Версия
 
-Текущая версия: 1.1.1
+Текущая версия: 1.1.2
 
 ## Зависимости
 
@@ -86,7 +86,7 @@
 ## Примечания
 
 *   Код содержит комментарии на русском языке.
-*   Для работы с LLM используется внешняя команда `cogitor`. Если она недоступна, можно попробовать заменить её на `tgpt` (см. комментарии в функции `llmQuery`).
+*   Для работы с LLM используется внешняя команда `tgpt` (brew install tgpt) https://github.com/aandrew-me/tgpt. Если она недоступна, можно попробовать заменить её на иную (см. комментарии в функции `llmQuery`).
 *   Редактор имеет фиксированный размер окна (115x34), определяемый в коде (`contentWidth`, `contentHeight`).
 *   Проверка кода программы была произведена на ОС macOS 15.6 
 
@@ -96,26 +96,27 @@
 
 Смотрите [CREDITS.md](CREDITS.md) — благодарности и информация о зависимостях.
 
-# Text editor
+# Editor
+# Text Editor
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
 
-This is a terminal text editor written in Go, utilizing the `tcell/v2` library for terminal interaction. It supports basic editing features, syntax highlighting for numerous programming languages, and integration with LLM (Large Language Models) via an external program `cogitor`.
+This is a terminal-based text editor written in Go, utilizing the `tcell/v2` library for terminal interactions. It supports basic editing functions, syntax highlighting for many programming languages, and integration with LLMs (Large Language Models) via an external program `cogitor`.
 
 ## Features
 
-*   **Text editing:** Multi-line editing, navigation with keys (arrows, Home, End, PgUp, PgDn), insertion, deletion, file creation and opening.
-*   **Syntax highlighting:** Supports syntax highlighting for the following languages: C, C++, Assembly, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp.
-*   **Search:** Search text within a file.
+*   **Text Editing:** Multiline editing, navigation via keys (arrows, Home, End, PgUp, PgDn), inserting, deleting, creating, and opening files.
+*   **Syntax Highlighting:** Supports syntax highlighting for the following languages: C, C++, Assembly, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp.
+*   **Search:** Search through the file text.
 *   **Navigation:** Jump to a specific line.
 *   **Undo/Redo:** Support for undo (`Undo`) and redo (`Redo`) operations.
-*   **Clipboard:** Cut, copy, and paste text (using the system clipboard via the `atotto/clipboard` library).
-*   **LLM integration:** Ability to send instructions and text from the editor to the external `cogitor` program for interaction with LLM. Buffer contents and visible text may be automatically included in the request.
-*   **Status line:** Shows filename, language, line and column numbers, and hotkey hints.
+*   **Clipboard:** Cut, copy, and paste text (uses system clipboard via `atotto/clipboard` library).
+*   **LLM Integration:** Ability to send instructions and text from the editor to an external `tgpt` program for interaction with LLMs. Data from the clipboard and the visible part of the text can be automatically added to the request.
+*   **Status Bar:** Displays file name, language, line and column number, as well as hotkey hints.
 
 ## Installation
 
-1.  Ensure you have Go installed (https://golang.org/dl/).
+1.  Ensure Go is installed (https://golang.org/dl/).
 2.  Install necessary dependencies:
     ```bash
     go mod init <module_name> # If creating a new module
@@ -123,12 +124,12 @@ This is a terminal text editor written in Go, utilizing the `tcell/v2` library f
     go get github.com/gdamore/tcell/v2
     go get github.com/mattn/go-runewidth
     ```
-    (Or just run `go mod tidy` if `go.mod` already exists).
+    (Or just use `go mod tidy` if `go.mod` already exists).
 3.  Compile the program:
     ```bash
-    go build -o editor main.go # Replace main.go with the path to your code file if different
+    go build -o editor main.go # Replace main.go with your code file if different
     ```
-4.  For LLM interaction, install and configure the external `cogitor` program (or modify the code to use another program like `tgpt`, as mentioned in comments).
+4.  To work with LLMs, install and configure the external `tgpt` program (or modify the code to use another program as noted in comments).
 
 ## Usage
 
@@ -140,35 +141,35 @@ Run the compiled file:
 
 ### Flags
 
-*   `-provider string`: LLM provider (defaults to environment variable `LLM_PROVIDER`).
-*   `-model string`: LLM model (defaults to environment variable `LLM_MODEL`).
+*   `-provider string`: LLM provider (defaults from environment variable `LLM_PROVIDER`).
+*   `-model string`: LLM model (defaults from environment variable `LLM_MODEL`).
 *   `-path string`: Path to the file to open.
 *   `-v, -version`: Show editor version.
 *   `-h, --help`: Show extended help.
 
-If the file path isn't specified via flags, it can be passed as the first command-line argument.
+If the file path isn't specified in flags, it can be provided as the first command-line argument.
 
 ### Hotkeys
 
-*   **Ctrl-S:** Save file.
-*   **Ctrl-Q:** Exit editor (with save prompt if file is modified).
+*   **Ctrl-S:** Save the file.
+*   **Ctrl-Q:** Exit the editor (prompt to save if the file has been modified).
 *   **Ctrl-F:** Search text.
 *   **Ctrl-G:** Go to line.
 *   **Ctrl-U:** Undo.
 *   **Ctrl-Y:** Redo.
-*   **Ctrl-K:** Cut current line.
+*   **Ctrl-K:** Cut the current line.
 *   **Ctrl-O:** Open file.
-*   **Ctrl-N:** Create new file.
-*   **Ctrl-L:** Send LLM instruction (via `cogitor`).
-*   **Arrows:** Move cursor.
+*   **Ctrl-N:** Create a new file.
+*   **Ctrl-L:** Send instruction to LLM (via `tgpt`).
+*   **Arrow keys:** Move cursor.
 *   **Home/End:** Move to start/end of line.
-*   **PgUp/PgDn:** Scroll up/down.
+*   **PgUp/PgDn:** Scroll up/down a page.
 *   **Enter:** Insert new line.
 *   **Backspace:** Delete character before cursor.
 
 ## Version
 
-Current version: 1.1.1
+Current version: 1.1.2
 
 ## Dependencies
 
@@ -178,17 +179,17 @@ Current version: 1.1.1
 
 ## License
 
-This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the BSD 3-Clause License — see the [LICENSE](LICENSE) file for details.
 
 ## Notes
 
 *   The code contains comments in Russian.
-*   LLM interaction is handled via the external `cogitor` command. If unavailable, it can be replaced with `tgpt` (see comments in `llmQuery` function).
-*   The editor window size is fixed (115x34), specified in the code (`contentWidth`, `contentHeight`).
-*   The program code check was performed on macOS 15.6.
+*   The LLM interaction uses an external command `tgpt` (install via `brew install tgpt`) https://github.com/aandrew-me/tgpt. If unavailable, it can be replaced with another as noted in the `llmQuery` function comments.
+*   The editor window size is fixed (115x34), defined in the code (`contentWidth`, `contentHeight`).
+*   The code has been tested on macOS 15.6.
 
-## Contact information
+## Contact Information
 
-If you have any questions or suggestions, please contact us at: [skala.skalolaz.1970@gmail.com].
+For questions or suggestions, contact: [skala.skalolaz.1970@gmail.com]
 
-Look [CREDITS.md](CREDITS.md) — thanks and information about dependencies.
+See also [CREDITS.md](CREDITS.md) — acknowledgments and information on dependencies.
