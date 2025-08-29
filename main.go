@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.1.1"
+const Version = "1.1.2"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -1000,11 +1000,11 @@ func (e *Editor) cutLine() {
 // llmQuery отправляет запрос LLM.
 func (e *Editor) llmQuery(instruction string) {
 	if strings.TrimSpace(e.llmProvider) == "" {
-		e.llmProvider = "pollinations"
+		e.llmProvider = "ollama"
 
 	}
 	if strings.TrimSpace(e.llmModel) == "" {
-		e.llmModel = "openai"
+		e.llmModel = "gemma3:4b"
 
 	}
 	if strings.TrimSpace(e.llmKey) == "" {
@@ -1023,14 +1023,12 @@ func (e *Editor) llmQuery(instruction string) {
 		payload = payload + "\nИмеющийся текст:\n" + visible
 	}
 
-	// If you do not have a program for interacting with the LLM called Cogitor,
+	// If you do not have a program for interacting with the LLM,
 	// I recommend using Tgpt, which can be installed from the MacOS terminal: brew install tgpt.
-	// In this case, after installation, replace "cogitor" with "tgpt" in the code.
-	// Если у Вас нет программы для взаимодействия с LLM под названием Cogitor, рекомендую
+	// Если у Вас нет программы для взаимодействия с LLM, рекомендую
 	// использовать Tgpt, которую можно установить из терминала MacOS: brew install tgpt.
-	// В этом случае, после установки, замените в коде "cogitor" на "tgpt"
 
-	cmd := exec.Command("cogitor", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, "--key", e.llmKey, payload)
+	cmd := exec.Command("tgpt", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, "--key", e.llmKey, payload)
 	out, err := cmd.Output()
 	if err != nil {
 		e.statusMessage("LLM error: " + err.Error())
