@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
@@ -15,7 +17,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.1.2"
+const Version = "1.2"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -73,24 +75,29 @@ func printUsageExtended() {
 	fmt.Println("Особенности:")
 	fmt.Println("  - Терминальный текстовый редактор с поддержкой многострочного редактирования, курсорной навигации,")
 	fmt.Println("    отмены/повтора (undo/redo), вырезания/копирования/вставки, поиска, перехода к строке,")
-	fmt.Println("    и опциональной интеграции с LLM через tgpt.")
-	fmt.Println("  - Интеграция LLM: вызывается внешний tgpt при настройке provider/model.")
+	fmt.Println("    и опциональной интеграции с LLM через cogitor.")
+	fmt.Println("  - Интеграция LLM: вызывается внешний cogitor при настройке provider/model.")
 	fmt.Println()
 	fmt.Println("Горячие клавиши:")
+	fmt.Println("  Ctrl-L  Отправить указание для LLM")
+	fmt.Println("  Ctrl-P  Генерирует текст или код на основе описания\n          (в виде коментария)")
 	fmt.Println("  Ctrl-S  Сохранить файл")
-	fmt.Println("  Ctrl-Q  Выход из редактора")
-	fmt.Println("  Ctrl-F  Поиск текста")
-	fmt.Println("  Ctrl-G  Перейти к строке (Goto)")
-	fmt.Println("  Ctrl-U  Undo (Отменить)")
-	fmt.Println("  Ctrl-Y  Redo (Вернуть отменённое)")
-	fmt.Println("  Ctrl-K  Cut текущей строки")
 	fmt.Println("  Ctrl-O  Открыть файл")
 	fmt.Println("  Ctrl-N  Новый файл")
+	fmt.Println("  Ctrl-Q  Выход из редактора")
+	fmt.Println("  Ctrl-F  Поиск текста")
+	fmt.Println("  Ctrl-G  Перейти к строке")
+	fmt.Println("  Ctrl-Z  Отменить")
+	fmt.Println("  Ctrl-E  Вернуть отменённое")
+	fmt.Println("  Ctrl-X  Убрать текущую строку")
+	fmt.Println("  Ctrl-A  Выделить все")
+	fmt.Println("  Ctrl-C  Копировать в буфер обмена")
+	fmt.Println("  Ctrl-V  Вставить буфер обмена")
 	fmt.Println("Навигация:")
 	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
 	fmt.Println()
 	fmt.Println("Примеры:")
-	fmt.Println("  editor --provider pollinations --model openai --path /path/to/file.txt")
+	fmt.Println("  editor -provider pollinations -model openai -path /path/to/file.txt")
 	fmt.Println("  editor file.txt")
 }
 
@@ -111,29 +118,46 @@ type Prompt struct {
 	Callback func(string)
 }
 
+// MultiLinePrompt represents a multi-line prompt for user input.
+// MultiLinePrompt представляет многострочный запрос пользовательского ввода.
+type MultiLinePrompt struct {
+	Label    string
+	Value    string
+	Callback func(string)
+}
+
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
-	screen        tcell.Screen
-	filename      string
-	lines         []string
-	cx, cy        int
-	offsetX       int
-	offsetY       int
-	dirty         bool
-	clipboard     string
-	undoStack     [][]string
-	redoStack     [][]string
-	prompt        *Prompt
-	quit          bool
-	width, height int
-	llmProvider   string
-	llmModel      string
-	llmKey        string
-	canvasWidth   int
-	contentWidth  int
-	contentHeight int
-	language      Language
+	screen             tcell.Screen
+	filename           string
+	lines              []string
+	cx, cy             int
+	offsetX            int
+	offsetY            int
+	dirty              bool
+	clipboard          string
+	undoStack          [][]string
+	redoStack          [][]string
+	prompt             *Prompt
+	multiLinePrompt    *MultiLinePrompt
+	quit               bool
+	width, height      int
+	llmProvider        string
+	llmModel           string
+	llmKey             string
+	canvasWidth        int
+	contentWidth       int
+	contentHeight      int
+	language           Language
+	selectAllBeforeLLM bool
+	ctrlAState         bool
+	ctrlLState         bool
+	ctrlPState         bool
+	selectStartX       int
+	selectStartY       int
+	selecting          bool
+	lineSelecting      bool
 }
 
 // NewEditor creates a new Editor instance.
@@ -147,7 +171,7 @@ func NewEditor(path string, provider string, model string) *Editor {
 		language: LangUnknown,
 	}
 	e.contentWidth = 115
-	e.contentHeight = 34
+	e.contentHeight = 35
 	e.canvasWidth = e.contentWidth
 	e.width = e.contentWidth
 	e.height = e.contentHeight
@@ -242,6 +266,21 @@ func (e *Editor) Run() error {
 // refreshSize updates the editor's dimensions.
 // refreshSize обновляет размеры редактора.
 func (e *Editor) refreshSize() {
+	// e.width = e.contentWidth
+	// e.height = e.contentHeight
+	// e.canvasWidth = e.contentWidth
+	w, h := e.screen.Size()
+	if w <= 0 {
+		w = 1
+	}
+	if h <= 0 {
+		h = 1
+	}
+	if w > 115 {
+		w = 115
+	}
+	e.contentWidth = w
+	e.contentHeight = h
 	e.width = e.contentWidth
 	e.height = e.contentHeight
 	e.canvasWidth = e.contentWidth
@@ -252,8 +291,6 @@ func (e *Editor) refreshSize() {
 	_ = cursorRow
 }
 
-// wrapLine wraps a line of text to fit the content width.
-// wrapLine переносит строку текста в соответствии с шириной контента.
 func (e *Editor) wrapLine(line string) []string {
 	runes := []rune(line)
 	if len(runes) == 0 {
@@ -262,8 +299,18 @@ func (e *Editor) wrapLine(line string) []string {
 	var parts []string
 	var currentWidth int
 	var start int
+	tabWidth := 4 // Assuming tab width is 4 spaces
+
 	for i, r := range runes {
-		rw := runewidth.RuneWidth(r)
+		var rw int
+		if r == '\t' {
+			rw = tabWidth - (currentWidth % tabWidth)
+		} else if unicode.IsSpace(r) {
+			rw = 1
+		} else {
+			rw = utf8.RuneLen(r)
+		}
+
 		if currentWidth+rw > e.contentWidth && i > start {
 			parts = append(parts, string(runes[start:i]))
 			start = i
@@ -322,7 +369,12 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 			offsetInSegRunes := e.cx - segmentStartRune
 			offsetInSegCells := 0
 			for i := 0; i < offsetInSegRunes; i++ {
-				offsetInSegCells += runewidth.RuneWidth(segRunes[i])
+				r := segRunes[i]
+				if r == '\t' {
+					offsetInSegCells += 4 - (offsetInSegCells % 4)
+				} else {
+					offsetInSegCells += runewidth.RuneWidth(r)
+				}
 			}
 			displayRow := totalBefore + segIndex
 			return displayRow, segIndex, offsetInSegCells
@@ -333,7 +385,11 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 	lastSegRunes := []rune(segs[len(segs)-1])
 	offsetInSegCells := 0
 	for _, r := range lastSegRunes {
-		offsetInSegCells += runewidth.RuneWidth(r)
+		if r == '\t' {
+			offsetInSegCells += 4 - (offsetInSegCells % 4)
+		} else {
+			offsetInSegCells += runewidth.RuneWidth(r)
+		}
 	}
 	return displayRow, len(segs) - 1, offsetInSegCells
 }
@@ -394,25 +450,72 @@ type HighlightedToken struct {
 	Style tcell.Style
 }
 
+// wrapText wraps text to fit a given width.
+// wrapText переносит текст в соответствии с заданной шириной.
+func wrapText(text string, width int) []string {
+	if width <= 0 {
+		return []string{text}
+	}
+	var lines []string
+	runes := []rune(text)
+	start := 0
+	currentWidth := 0
+
+	for i, r := range runes {
+		rw := runewidth.RuneWidth(r)
+		if currentWidth+rw > width && i > start {
+			lines = append(lines, string(runes[start:i]))
+			start = i
+			currentWidth = rw
+		} else {
+			currentWidth += rw
+		}
+
+		if r == '\n' {
+			lines = append(lines, string(runes[start:i+1]))
+			start = i + 1
+			currentWidth = 0
+		}
+	}
+
+	if start < len(runes) {
+		lines = append(lines, string(runes[start:]))
+	} else if len(text) > 0 && text[len(text)-1] == '\n' {
+		lines = append(lines, "")
+	} else if len(text) == 0 {
+		lines = append(lines, "")
+	}
+
+	return lines
+}
+
 // render renders the editor to the screen.
 // render отображает редактор на экране.
 func (e *Editor) render() {
 	e.screen.Clear()
 	display := e.buildDisplayBuffer()
 	total := len(display)
-	topLine, bottomLine := e.statusBar()
+	topLine, bottomLine1, bottomLine2 := e.statusBar()
 	tRunes := []rune(topLine)
 	for x := 0; x < e.contentWidth; x++ {
 		var ch rune = ' '
 		if x < len(tRunes) {
 			ch = tRunes[x]
 		}
-		e.screen.SetContent(x, 0, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite))
+		e.screen.SetContent(x, 0, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 	}
-	contentRows := e.contentHeight - 4
+	contentRows := e.contentHeight - 3
 	if contentRows < 0 {
 		contentRows = 0
 	}
+
+	var selStartLine, selStartCol, selEndLine, selEndCol int
+	if e.selecting {
+		selStartLine, selStartCol, selEndLine, selEndCol = e.getSelectionRange()
+	}
+
+	const tabWidth = 4
+
 	for i := 0; i < contentRows; i++ {
 		di := e.offsetY + i
 		if di >= total {
@@ -425,6 +528,9 @@ func (e *Editor) render() {
 		originalLineText := e.lines[row.lineIndex]
 		tokens := e.highlightLine(originalLineText, row.lineIndex)
 		needHighlight := (row.lineIndex == e.cy)
+
+		styleSelection := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlue)
+		styleSelectionCurrentLine := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorNavy)
 		xPos := 0
 		tokenStartRuneIdx := 0
 		for _, token := range tokens {
@@ -432,9 +538,39 @@ func (e *Editor) render() {
 			tokenLenRunes := len(tokenRunes)
 			tokenEndRuneIdx := tokenStartRuneIdx + tokenLenRunes
 			style := token.Style
-			if needHighlight {
+
+			if e.selecting && row.lineIndex >= selStartLine && row.lineIndex <= selEndLine {
+
+				tokenStartCol := tokenStartRuneIdx
+				tokenEndCol := tokenEndRuneIdx
+
+				lineSelStartCol := 0
+				lineSelEndCol := len([]rune(e.lines[row.lineIndex]))
+
+				if row.lineIndex == selStartLine {
+					lineSelStartCol = selStartCol
+				}
+				if row.lineIndex == selEndLine {
+					lineSelEndCol = selEndCol
+				}
+
+				if tokenStartCol < lineSelEndCol && tokenEndCol > lineSelStartCol {
+					if needHighlight {
+						style = styleSelectionCurrentLine
+					} else {
+						style = styleSelection
+					}
+					// Более сложная логика (например, частичное выделение токена)
+					// требует рисования символа за символом с разными стилями.
+					// Для простоты пока применяется стиль ко всему токену,
+					// если он пересекается с выделением.
+				}
+			}
+
+			if needHighlight && !e.selecting {
 				style = style.Background(tcell.ColorBlue)
 			}
+			segRunes := []rune(row.text)
 			for runeOffsetInToken := 0; runeOffsetInToken < tokenLenRunes; runeOffsetInToken++ {
 				originalRuneIdx := tokenStartRuneIdx + runeOffsetInToken
 				segStartRune := 0
@@ -445,13 +581,23 @@ func (e *Editor) render() {
 				segEndRune := segStartRune + len([]rune(row.text))
 				if originalRuneIdx >= segStartRune && originalRuneIdx < segEndRune {
 					runeIdxInSeg := originalRuneIdx - segStartRune
-					if runeIdxInSeg >= 0 && runeIdxInSeg < len([]rune(row.text)) {
-						segRunes := []rune(row.text)
-						if runeIdxInSeg < len(segRunes) {
-							r := segRunes[runeIdxInSeg]
+					if runeIdxInSeg >= 0 && runeIdxInSeg < len(segRunes) {
+						r := segRunes[runeIdxInSeg]
+						if r == '\t' {
+							rw := tabWidth - (xPos % tabWidth)
+							if xPos+rw > e.contentWidth {
+								break
+							}
+							for cellOffset := 0; cellOffset < rw; cellOffset++ {
+								e.screen.SetContent(xPos+cellOffset, i+1, ' ', nil, style)
+							}
+							xPos += rw
+						} else {
 							rw := 1
 							if runeIdxInSeg < len(row.widths) {
 								rw = row.widths[runeIdxInSeg]
+							} else {
+								rw = runewidth.RuneWidth(r)
 							}
 							if xPos+rw > e.contentWidth {
 								break
@@ -478,7 +624,22 @@ func (e *Editor) render() {
 		}
 		for x := xPos; x < e.contentWidth; x++ {
 			style := styleDefault
-			if needHighlight {
+			if e.selecting && row.lineIndex >= selStartLine && row.lineIndex <= selEndLine {
+				lineSelStartCol := 0
+
+				if row.lineIndex == selStartLine {
+					lineSelStartCol = selStartCol
+				}
+
+				if xPos >= lineSelStartCol && (row.lineIndex < selEndLine || xPos < selEndCol) {
+					if needHighlight {
+						style = styleSelectionCurrentLine
+					} else {
+						style = styleSelection
+					}
+				}
+			}
+			if needHighlight && !e.selecting {
 				style = styleDefault.Background(tcell.ColorBlue)
 			}
 			e.screen.SetContent(x, i+1, ' ', nil, style)
@@ -515,20 +676,307 @@ func (e *Editor) render() {
 			e.screen.SetContent(x, promptLine, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 		}
 	}
-	bRunes := []rune(bottomLine)
-	for i := 0; i < e.contentWidth; i++ {
-		var ch rune = ' '
-		if i < len(bRunes) {
-			ch = bRunes[i]
+
+	if e.multiLinePrompt != nil && e.contentHeight >= 5 {
+		promptText := e.multiLinePrompt.Label + ": " + e.multiLinePrompt.Value
+		wrapWidth := e.contentWidth - 2
+		if wrapWidth < 1 {
+			wrapWidth = 1
 		}
-		e.screen.SetContent(i, e.contentHeight-1, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite))
+		wrappedLines := wrapText(promptText, wrapWidth)
+		numLinesToShow := len(wrappedLines)
+		if numLinesToShow > 4 {
+			numLinesToShow = 4
+		}
+		startScreenRow := e.contentHeight - 3 - numLinesToShow
+		if startScreenRow < 1 {
+			startScreenRow = 1
+			if len(wrappedLines) > (e.contentHeight - 2) {
+				wrappedLines = wrappedLines[len(wrappedLines)-(e.contentHeight-2):]
+			}
+			numLinesToShow = len(wrappedLines)
+			if numLinesToShow > e.contentHeight-2 {
+				numLinesToShow = e.contentHeight - 2
+			}
+		}
+
+		for i := 0; i < numLinesToShow; i++ {
+			screenRow := startScreenRow + i
+			if screenRow >= e.contentHeight-1 {
+				break
+			}
+			for x := 0; x < e.contentWidth; x++ {
+				e.screen.SetContent(x, screenRow, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+			}
+		}
+		for i := 0; i < numLinesToShow; i++ {
+			screenRow := startScreenRow + i
+			if screenRow >= e.contentHeight-1 {
+				break
+			}
+			lineText := ""
+			if i < len(wrappedLines) {
+				lineText = wrappedLines[i]
+			}
+			lineRunes := []rune(lineText)
+			xPos := 1
+			for j := 0; j < len(lineRunes) && xPos < e.contentWidth-1; j++ {
+				r := lineRunes[j]
+				rw := runewidth.RuneWidth(r)
+				if xPos+rw > e.contentWidth-1 {
+					break
+				}
+				for cellOffset := 0; cellOffset < rw; cellOffset++ {
+					drawRune := r
+					if cellOffset > 0 {
+						drawRune = ' '
+					}
+					e.screen.SetContent(xPos+cellOffset, screenRow, drawRune, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+				}
+				xPos += rw
+			}
+		}
+	}
+	// bRunes := []rune(bottomLine1)
+	y1 := e.contentHeight - 1
+	b1 := []rune(bottomLine1)
+	x := 0
+	for x < e.contentWidth {
+		var ch rune = ' '
+		if x < len(b1) {
+			ch = b1[x]
+		}
+		if ch == '^' && x+1 < len(b1) {
+			e.screen.SetContent(x, y1, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+			next := b1[x+1]
+			inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+			if x+1 < e.contentWidth {
+				e.screen.SetContent(x+1, y1, next, nil, inv)
+			}
+			x += 2
+			continue
+		}
+		style := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+		if x < len(b1) {
+			e.screen.SetContent(x, y1, ch, nil, style)
+		} else {
+			e.screen.SetContent(x, y1, ' ', nil, style)
+		}
+		x++
+	}
+
+	if bottomLine2 != "" {
+		y2 := e.contentHeight - 2
+		b2 := []rune(bottomLine2)
+		x = 0
+		for x < e.contentWidth {
+			var ch rune = ' '
+			if x < len(b2) {
+				ch = b2[x]
+			}
+			if ch == '^' && x+1 < len(b2) {
+				e.screen.SetContent(x, y2, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+				next := b2[x+1]
+				inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+				if x+1 < e.contentWidth {
+					e.screen.SetContent(x+1, y2, next, nil, inv)
+				}
+				x += 2
+				continue
+			}
+			style := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+			if x < len(b2) {
+				e.screen.SetContent(x, y2, ch, nil, style)
+			} else {
+				e.screen.SetContent(x, y2, ' ', nil, style)
+			}
+			x++
+		}
+	} else {
+		for i := 0; i < e.contentWidth; i++ {
+			e.screen.SetContent(i, e.contentHeight-2, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+		}
 	}
 	e.screen.Show()
 }
 
+func (e *Editor) startSelection() {
+	if !e.selecting {
+		e.selecting = true
+		e.selectStartX = e.cx
+		e.selectStartY = e.cy
+	}
+}
+
+// startLineSelection начинает или расширяет выделение строк при Shift + стрелки.
+// Если выделение уже активно, продолжает его в направлении движения курсора.
+func (e *Editor) startLineSelection() {
+	if !e.selecting {
+		e.selecting = true
+		e.lineSelecting = true
+		e.selectStartX = e.cx
+		e.selectStartY = e.cy
+	} else if !e.lineSelecting {
+		e.lineSelecting = true
+		e.selectStartX = e.cx
+		e.selectStartY = e.cy
+	}
+}
+
+// endSelection завершает любое выделение.
+func (e *Editor) endSelection() {
+	e.selecting = false
+	e.lineSelecting = false
+}
+
+// getSelectionRange возвращает диапазон выделенных строк или символов.
+// При lineSelecting — возвращает начало и конец по строкам (с полными строками).
+func (e *Editor) getSelectionRange() (int, int, int, int) {
+	if !e.selecting {
+		return 0, 0, 0, 0
+	}
+
+	if e.lineSelecting {
+		startLine := e.selectStartY
+		endLine := e.cy
+
+		if startLine > endLine {
+			startLine, endLine = endLine, startLine
+		}
+
+		startCol := 0
+		endCol := 0
+		if endLine < len(e.lines) {
+			endCol = len([]rune(e.lines[endLine]))
+		}
+
+		return startLine, startCol, endLine, endCol
+	}
+
+	startLine := e.selectStartY
+	endLine := e.cy
+	startCol := e.selectStartX
+	endCol := e.cx
+
+	if startLine > endLine || (startLine == endLine && startCol > endCol) {
+		startLine, endLine = endLine, startLine
+		startCol, endCol = endCol, startCol
+	}
+
+	return startLine, startCol, endLine, endCol
+}
+
+// getSelectedText возвращает текст из текущего выделения.
+// При lineSelecting — возвращает полные строки.
+func (e *Editor) getSelectedText() string {
+	startLine, startCol, endLine, endCol := e.getSelectionRange()
+	if startLine == 0 && startCol == 0 && endLine == 0 && endCol == 0 {
+		return ""
+	}
+
+	var selectedLines []string
+
+	if e.lineSelecting {
+		if startLine < 0 {
+			startLine = 0
+		}
+		if endLine >= len(e.lines) {
+			endLine = len(e.lines) - 1
+		}
+		if startLine > endLine {
+			startLine, endLine = endLine, startLine
+		}
+		for i := startLine; i <= endLine; i++ {
+			if i < len(e.lines) {
+				selectedLines = append(selectedLines, e.lines[i])
+			}
+		}
+	} else {
+		if startLine == endLine {
+			if startLine < len(e.lines) {
+				lineRunes := []rune(e.lines[startLine])
+				if startCol < endCol && endCol <= len(lineRunes) {
+					selectedLines = append(selectedLines, string(lineRunes[startCol:endCol]))
+				}
+			}
+		} else {
+			if startLine < len(e.lines) {
+				firstLineRunes := []rune(e.lines[startLine])
+				if startCol < len(firstLineRunes) {
+					selectedLines = append(selectedLines, string(firstLineRunes[startCol:]))
+				}
+			}
+			for i := startLine + 1; i < endLine; i++ {
+				if i < len(e.lines) {
+					selectedLines = append(selectedLines, e.lines[i])
+				}
+			}
+			if endLine < len(e.lines) {
+				lastLineRunes := []rune(e.lines[endLine])
+				if endCol > 0 && endCol <= len(lastLineRunes) {
+					selectedLines = append(selectedLines, string(lastLineRunes[:endCol]))
+				}
+			}
+		}
+	}
+
+	return strings.Join(selectedLines, "\n")
+}
+
+// deleteSelection удаляет выделенный текст.
+func (e *Editor) deleteSelection() {
+	if !e.selecting {
+		return
+	}
+
+	e.pushUndo()
+	startLine, startCol, endLine, endCol := e.getSelectionRange()
+
+	if e.lineSelecting {
+		if startLine < 0 {
+			startLine = 0
+		}
+		if endLine >= len(e.lines) {
+			endLine = len(e.lines) - 1
+		}
+		if startLine > endLine {
+			startLine, endLine = endLine, startLine
+		}
+
+		e.lines = append(e.lines[:startLine], e.lines[endLine+1:]...)
+		e.cy = startLine
+		if e.cy >= len(e.lines) {
+			e.cy = len(e.lines) - 1
+		}
+		if e.cy < 0 {
+			e.cy = 0
+			e.cx = 0
+		} else {
+			e.cx = 0
+		}
+	} else {
+		if startLine == endLine {
+			lineRunes := []rune(e.lines[startLine])
+			e.lines[startLine] = string(append(lineRunes[:startCol], lineRunes[endCol:]...))
+			e.cx = startCol
+		} else {
+			firstLineRunes := []rune(e.lines[startLine])
+			lastLineRunes := []rune(e.lines[endLine])
+			merged := string(append(firstLineRunes[:startCol], lastLineRunes[endCol:]...))
+			e.lines = append(e.lines[:startLine], append([]string{merged}, e.lines[endLine+1:]...)...)
+			e.cy = startLine
+			e.cx = startCol
+		}
+	}
+
+	e.endSelection()
+	e.dirty = true
+	e.redoStack = nil
+}
+
 // statusBar generates the top and bottom status bar text.
 // statusBar генерирует текст верхней и нижней строки состояния.
-func (e *Editor) statusBar() (string, string) {
+func (e *Editor) statusBar() (string, string, string) {
 	left := "EDITOR " + Version
 	name := e.filename
 	if name == "" {
@@ -538,7 +986,18 @@ func (e *Editor) statusBar() (string, string) {
 	if e.language != LangUnknown {
 		langInfo = " [" + string(e.language) + "]"
 	}
-	center := fmt.Sprintf("%s%s  Ln %d, Col %d", name, langInfo, e.cy+1, e.cx+1)
+	totalLines := len(e.lines)
+	indicator := ""
+	if e.ctrlPState {
+		indicator = " *P"
+	}
+	if e.ctrlLState {
+		indicator = " *L"
+	}
+	if e.ctrlAState {
+		indicator = " *A"
+	}
+	center := fmt.Sprintf("%s%s  Ln %d/%d, Col %d%s", name, langInfo, e.cy+1, totalLines, e.cx+1, indicator)
 	lineRunes := make([]rune, e.contentWidth)
 	for i := range lineRunes {
 		lineRunes[i] = ' '
@@ -568,23 +1027,108 @@ func (e *Editor) statusBar() (string, string) {
 		lineRunes[pos] = r
 	}
 	top := string(lineRunes)
-	bottom := "CTRL-L  Ctrl-S Save  Ctrl-O Open  Ctrl-N New  Ctrl-Q Quit  Ctrl-F Find  Ctrl-G GoTo  Ctrl-U OTME Ctrl-Y BEPH Ctrl-K"
-	return top, bottom
+	bottom2 := "CTRL     ^L Prompt LLM   ^O Open file   ^N New file   ^S Save file   ^Q Quit     ^F Find text   ^G Go to line"
+	bottom1 := "         ^P Generates    ^C Copy to     ^V Insert     ^A All         ^X Remove   ^Z Cancel      ^E Return     "
+
+	return top, bottom1, bottom2
+}
+
+// pasteFromClipboard reads text from the system clipboard and inserts it at the cursor position.
+// pasteFromClipboard читает текст из системного буфера обмена и вставляет его в позицию курсора.
+func (e *Editor) pasteFromClipboard() {
+	text, err := clipboard.ReadAll()
+	if err != nil {
+		e.statusMessage("Insert error: " + err.Error())
+		return
+	}
+
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+
+	pasteLines := strings.Split(text, "\n")
+	if len(pasteLines) == 0 {
+		return
+	}
+	e.pushUndo()
+
+	currentLine := e.lines[e.cy]
+	lineRunes := []rune(currentLine)
+	cursorX := e.cx
+	if cursorX > len(lineRunes) {
+		cursorX = len(lineRunes)
+	}
+
+	leftPart := string(lineRunes[:cursorX])
+	rightPart := string(lineRunes[cursorX:])
+
+	if len(pasteLines) == 1 {
+		e.lines[e.cy] = leftPart + pasteLines[0] + rightPart
+		e.cx = cursorX + len([]rune(pasteLines[0]))
+	} else {
+		e.lines[e.cy] = leftPart + pasteLines[0]
+		insertIndex := e.cy + 1
+		for i := 1; i < len(pasteLines)-1; i++ {
+			e.lines = append(e.lines[:insertIndex], append([]string{pasteLines[i]}, e.lines[insertIndex:]...)...)
+			insertIndex++
+		}
+		lastPastedLine := pasteLines[len(pasteLines)-1]
+		e.lines = append(e.lines[:insertIndex], append([]string{lastPastedLine + rightPart}, e.lines[insertIndex:]...)...)
+		e.cy = insertIndex
+		e.cx = len([]rune(lastPastedLine))
+	}
+
+	e.dirty = true
+	e.redoStack = nil
+	e.ensureVisible()
 }
 
 // handleKey handles keyboard input.
 // handleKey обрабатывает ввод с клавиатуры.
 func (e *Editor) handleKey(ev *tcell.EventKey) {
+	if e.multiLinePrompt != nil {
+		e.handleMultiLinePromptInput(ev)
+		return
+	}
 	if e.prompt != nil {
 		e.handlePromptInput(ev)
 		return
 	}
+	shiftPressed := ev.Modifiers()&tcell.ModShift != 0
+
 	switch ev.Key() {
+	case tcell.KeyCtrlA:
+		if !e.selecting {
+			e.selecting = true
+			e.selectStartX = 0
+			e.selectStartY = 0
+			e.cy = len(e.lines) - 1
+			if e.cy < 0 {
+				e.cy = 0
+			}
+			lastLine := ""
+			if len(e.lines) > 0 {
+				lastLine = e.lines[e.cy]
+			}
+			e.cx = len([]rune(lastLine))
+			e.ensureVisible()
+		}
+		e.ctrlAState = true
+		e.selectAllBeforeLLM = true
 	case tcell.KeyCtrlS:
 		_ = e.save()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyCtrlP:
+		e.ctrlPState = true
+		e.sendCommentToLLM()
+
 	case tcell.KeyCtrlQ:
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 		if e.dirty {
-			e.promptShow("Записать перед выходом? (y/n)", func(input string) {
+			e.promptShow("Write down before leaving? (y/n)", func(input string) {
 				switch strings.ToLower(strings.TrimSpace(input)) {
 				case "y", "yes", "д", "да":
 					if err := e.save(); err != nil {
@@ -601,15 +1145,19 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 			e.quit = true
 		}
 	case tcell.KeyCtrlF:
-		e.promptShow("Поиск", func(input string) {
+		e.promptShow("Search", func(input string) {
 			e.findAndJump(input)
 		})
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyCtrlL:
-		e.promptShow("Указание для LLM", func(input string) {
+		e.multiLinePromptShow("(To send the prompt, click Ctrl-L)  ", func(input string) {
 			e.llmQuery(input)
 		})
+		e.ctrlLState = true
 	case tcell.KeyCtrlG:
-		e.promptShow("Переход к строке", func(input string) {
+		e.promptShow("Go to line", func(input string) {
 			n, err := strconv.Atoi(strings.TrimSpace(input))
 			if err != nil || n <= 0 {
 				return
@@ -624,13 +1172,41 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 			e.cy = line
 			e.cx = 0
 			e.ensureVisible()
+			e.endSelection()
 		})
-	case tcell.KeyCtrlU:
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyCtrlZ:
 		e.undo()
-	case tcell.KeyCtrlY:
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+		e.endSelection()
+	case tcell.KeyCtrlE:
 		e.redo()
-	case tcell.KeyCtrlK:
-		e.cutLine()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+		e.endSelection()
+	case tcell.KeyCtrlX:
+		if e.selecting {
+			selectedText := e.getSelectedText()
+			if selectedText != "" {
+				if err := clipboard.WriteAll(selectedText); err != nil {
+					e.statusMessage("Copying error of clipboard: " + err.Error())
+				} else {
+					e.deleteSelection()
+					e.statusMessage("Cut out: " + strconv.Itoa(strings.Count(selectedText, "\n")+1) + " lines")
+				}
+			}
+		} else {
+			e.cutLine()
+		}
+
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyCtrlO:
 		e.promptShow("Open file (path)", func(input string) {
 			p := strings.TrimSpace(input)
@@ -638,51 +1214,170 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 				e.openFile(p)
 			}
 		})
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+		e.endSelection()
 	case tcell.KeyCtrlN:
 		e.newFile()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+		e.endSelection()
+	case tcell.KeyCtrlC:
+		if e.ctrlAState {
+			allText := strings.Join(e.lines, "\n")
+			if err := clipboard.WriteAll(allText); err != nil {
+				e.statusMessage("Copy error: " + err.Error())
+			} else {
+				e.statusMessage("Everything has been copied: " + strconv.Itoa(len(e.lines)) + " lines")
+			}
+			e.ctrlAState = false
+			e.ctrlPState = false
+			e.ctrlLState = false
+		} else {
+			if e.selecting {
+				selectedText := e.getSelectedText()
+				if selectedText != "" {
+					if err := clipboard.WriteAll(selectedText); err != nil {
+						e.statusMessage("Copy error: " + err.Error())
+					} else {
+						e.statusMessage("Copy: " + strconv.Itoa(strings.Count(selectedText, "\n")+1) + " lines")
+					}
+				}
+			} else {
+				if e.cy < len(e.lines) && e.cy >= 0 {
+					line := e.lines[e.cy]
+					if err := clipboard.WriteAll(line); err != nil {
+						e.statusMessage("Copy error: " + err.Error())
+					} else {
+						e.statusMessage("Copy: " + line)
+					}
+				}
+			}
+		}
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyCtrlV:
+		if e.selecting {
+			e.deleteSelection()
+		}
+		e.pasteFromClipboard()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+
 	case tcell.KeyUp:
+		if shiftPressed {
+			e.startLineSelection()
+		} else if e.selecting {
+			e.endSelection()
+		}
 		if e.cy > 0 {
 			e.cy--
 			curRunes := []rune(e.lines[e.cy])
 			if e.cx > len(curRunes) {
 				e.cx = len(curRunes)
 			}
-			e.ensureVisible()
 		}
+		e.ensureVisible()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyDown:
+		if shiftPressed {
+			e.startLineSelection()
+		} else if e.selecting {
+			e.endSelection()
+		}
 		if e.cy < len(e.lines)-1 {
 			e.cy++
 			curRunes := []rune(e.lines[e.cy])
 			if e.cx > len(curRunes) {
 				e.cx = len(curRunes)
 			}
-			e.ensureVisible()
 		}
+		e.ensureVisible()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyLeft:
 		if e.cx > 0 {
+			if shiftPressed {
+				e.startLineSelection()
+			} else if e.selecting {
+				e.endSelection()
+			}
 			e.cx--
 		} else if e.cy > 0 {
+			if shiftPressed {
+				e.startLineSelection()
+			} else if e.selecting {
+				e.endSelection()
+			}
 			e.cy--
 			prevRunes := []rune(e.lines[e.cy])
 			e.cx = len(prevRunes)
 			e.ensureVisible()
+		} else if e.selecting {
+			e.endSelection()
 		}
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyRight:
 		lineRunes := []rune(e.lines[e.cy])
 		lineLen := len(lineRunes)
 		if e.cx < lineLen {
+			if shiftPressed {
+				e.startSelection()
+			} else if e.selecting {
+				e.endSelection()
+			}
 			e.cx++
 		} else if e.cy < len(e.lines)-1 {
+			if shiftPressed {
+				e.startSelection()
+			} else if e.selecting {
+				e.endSelection()
+			}
 			e.cy++
 			e.cx = 0
 			e.ensureVisible()
+		} else if e.selecting {
+			e.endSelection()
 		}
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyHome:
+		if shiftPressed {
+			e.startSelection()
+		} else if e.selecting {
+			e.endSelection()
+		}
 		e.cx = 0
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyEnd:
+		if shiftPressed {
+			e.startSelection()
+		} else if e.selecting {
+			e.endSelection()
+		}
 		lineRunes := []rune(e.lines[e.cy])
 		e.cx = len(lineRunes)
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyPgUp:
+		if shiftPressed {
+			e.startSelection()
+		} else if e.selecting {
+			e.endSelection()
+		}
 		step := e.height - 1
 		e.offsetY -= step
 		if e.offsetY < 0 {
@@ -692,22 +1387,56 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		if e.cy > len(e.lines)-1 {
 			e.cy = len(e.lines) - 1
 		}
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyPgDn:
+		if shiftPressed {
+			e.startSelection()
+		} else if e.selecting {
+			e.endSelection()
+		}
 		step := e.height - 1
 		e.offsetY += step
 		if e.offsetY > len(e.lines)-1 {
 			e.offsetY = len(e.lines) - 1
 		}
 		e.cy = e.offsetY
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyEnter:
+		if e.selecting {
+			e.deleteSelection()
+		}
 		e.newline()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
-		e.backspace()
+		if e.selecting {
+			e.deleteSelection()
+		} else {
+			e.backspace()
+		}
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyEscape:
+		e.endSelection()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
 	default:
 		r := ev.Rune()
 		if r != 0 && (ev.Modifiers()&tcell.ModAlt) == 0 {
+			if e.selecting {
+				e.deleteSelection()
+			}
 			e.insertRune(r)
+			e.ctrlAState = false
 		}
+
 	}
 	e.ensureVisible()
 }
@@ -802,6 +1531,18 @@ func (e *Editor) promptShow(label string, cb func(string)) {
 		Value:    "",
 		Callback: cb,
 	}
+	e.multiLinePrompt = nil
+}
+
+// multiLinePromptShow shows a multi-line prompt to the user.
+// multiLinePromptShow показывает пользователю многострочный запрос.
+func (e *Editor) multiLinePromptShow(label string, cb func(string)) {
+	e.multiLinePrompt = &MultiLinePrompt{
+		Label:    label,
+		Value:    "",
+		Callback: cb,
+	}
+	e.prompt = nil
 }
 
 // handlePromptInput handles input for the prompt.
@@ -830,6 +1571,39 @@ func (e *Editor) handlePromptInput(ev *tcell.EventKey) {
 		r := ev.Rune()
 		if r != 0 {
 			e.prompt.Value += string(r)
+		}
+	}
+}
+
+// handleMultiLinePromptInput handles input for the multi-line prompt.
+// handleMultiLinePromptInput обрабатывает ввод для многострочного запроса.
+func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
+	switch ev.Key() {
+	case tcell.KeyEsc:
+		e.multiLinePrompt = nil
+	case tcell.KeyEnter:
+		e.multiLinePrompt.Value += "\n"
+	case tcell.KeyCtrlL:
+		if e.multiLinePrompt != nil {
+			val := e.multiLinePrompt.Value
+			cb := e.multiLinePrompt.Callback
+			e.multiLinePrompt = nil
+			if cb != nil {
+				cb(val)
+			}
+		}
+		e.ctrlLState = false
+	default:
+		if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
+			if len(e.multiLinePrompt.Value) > 0 {
+				runes := []rune(e.multiLinePrompt.Value)
+				e.multiLinePrompt.Value = string(runes[:len(runes)-1])
+			}
+			return
+		}
+		r := ev.Rune()
+		if r != 0 {
+			e.multiLinePrompt.Value += string(r)
 		}
 	}
 }
@@ -920,28 +1694,94 @@ func (e *Editor) pushUndo() {
 	e.redoStack = nil
 }
 
+// scrollToLine прокручивает редактор так, чтобы указанная строка (lineIdx) была видна.
+// Предпочтительно строка оказывается по центру экрана.
+func (e *Editor) scrollToLine(lineIdx int) {
+	if lineIdx < 0 {
+		lineIdx = 0
+	}
+	if lineIdx >= len(e.lines) {
+		lineIdx = len(e.lines) - 1
+	}
+	if lineIdx < 0 {
+		return
+	}
+	visibleRows := e.contentHeight - 4
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	totalDisplayRowsBeforeTarget := 0
+	for i := 0; i < lineIdx; i++ {
+		totalDisplayRowsBeforeTarget += len(e.wrapLine(e.lines[i]))
+	}
+	targetWrappedLinesCount := len(e.wrapLine(e.lines[lineIdx]))
+	if targetWrappedLinesCount == 0 {
+		targetWrappedLinesCount = 1
+	}
+	targetDisplayRow := totalDisplayRowsBeforeTarget
+	newOffsetY := targetDisplayRow - visibleRows/2
+	if newOffsetY < 0 {
+		newOffsetY = 0
+	} else {
+		totalDisplayRows := 0
+		for _, line := range e.lines {
+			totalDisplayRows += len(e.wrapLine(line))
+		}
+		if totalDisplayRows == 0 {
+			totalDisplayRows = 1
+		}
+		maxOffsetY := totalDisplayRows - visibleRows
+		if maxOffsetY < 0 {
+			maxOffsetY = 0
+		}
+		if newOffsetY > maxOffsetY {
+			newOffsetY = maxOffsetY
+		}
+	}
+
+	e.offsetY = newOffsetY
+}
+
+// centerViewOnCursor центрирует вид редактора на текущей позиции курсора (e.cy).
+func (e *Editor) centerViewOnCursor() {
+	e.scrollToLine(e.cy)
+}
+
 // undo reverts the last change.
 // undo отменяет последнее изменение.
 func (e *Editor) undo() {
 	if len(e.undoStack) == 0 {
 		return
 	}
+	savedCx := e.cx
+	savedCy := e.cy
 	current := make([]string, len(e.lines))
 	copy(current, e.lines)
 	e.redoStack = append(e.redoStack, current)
 	last := e.undoStack[len(e.undoStack)-1]
 	e.undoStack = e.undoStack[:len(e.undoStack)-1]
 	e.lines = last
-	e.cy = len(e.lines) - 1
-	if e.cy < 0 {
-		e.cy = 0
-	}
-	lineRunes := []rune(e.lines[e.cy])
-	if e.cx > len(lineRunes) {
-		e.cx = len(lineRunes)
+
+	if savedCy >= len(e.lines) {
+		e.cy = len(e.lines) - 1
+		if e.cy < 0 {
+			e.cy = 0
+			e.cx = 0
+		} else {
+			lineRunes := []rune(e.lines[e.cy])
+			e.cx = len(lineRunes)
+		}
+	} else {
+		e.cy = savedCy
+		lineRunes := []rune(e.lines[e.cy])
+		if savedCx > len(lineRunes) {
+			e.cx = len(lineRunes)
+		} else {
+			e.cx = savedCx
+		}
 	}
 	e.dirty = true
-	e.ensureVisible()
+	e.centerViewOnCursor()
 }
 
 // redo reapplies the last undone change.
@@ -950,22 +1790,35 @@ func (e *Editor) redo() {
 	if len(e.redoStack) == 0 {
 		return
 	}
+	savedCx := e.cx
+	savedCy := e.cy
 	current := make([]string, len(e.lines))
 	copy(current, e.lines)
 	e.undoStack = append(e.undoStack, current)
 	next := e.redoStack[len(e.redoStack)-1]
 	e.redoStack = e.redoStack[:len(e.redoStack)-1]
 	e.lines = next
-	e.cy = len(e.lines) - 1
-	if e.cy < 0 {
-		e.cy = 0
-	}
-	lineRunes := []rune(e.lines[e.cy])
-	if e.cx > len(lineRunes) {
-		e.cx = len(lineRunes)
+	if savedCy >= len(e.lines) {
+		e.cy = len(e.lines) - 1
+		if e.cy < 0 {
+			e.cy = 0
+			e.cx = 0
+		} else {
+			lineRunes := []rune(e.lines[e.cy])
+			e.cx = len(lineRunes)
+		}
+	} else {
+		e.cy = savedCy
+		lineRunes := []rune(e.lines[e.cy])
+		if savedCx > len(lineRunes) {
+			e.cx = len(lineRunes)
+		} else {
+			e.cx = savedCx
+		}
 	}
 	e.dirty = true
-	e.ensureVisible()
+	e.centerViewOnCursor()
+
 }
 
 // cutLine cuts the current line and copies it to the clipboard.
@@ -975,7 +1828,7 @@ func (e *Editor) cutLine() {
 		e.pushUndo()
 		e.clipboard = e.lines[e.cy]
 		if err := clipboard.WriteAll(e.clipboard); err != nil {
-			e.statusMessage("Ошибка копирования БО: " + err.Error())
+			e.statusMessage("Copy error clipboard: " + err.Error())
 		}
 		e.lines = append(e.lines[:e.cy], e.lines[e.cy+1:]...)
 		if e.cy >= len(e.lines) && len(e.lines) > 0 {
@@ -996,47 +1849,72 @@ func (e *Editor) cutLine() {
 	}
 }
 
+// sendCommentToLLM sends a comment to the LLM.
+// sendCommentToLLM отправляет комментарий в LLM.
+func (e *Editor) sendCommentToLLM() {
+	linesAboveCursor := e.lines[:e.cy]
+	commentLines := []string{}
+	for _, line := range linesAboveCursor {
+		if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "!") || strings.HasPrefix(line, ";") {
+			commentLines = append(commentLines, line)
+		}
+	}
+	firstComment := ""
+	if len(commentLines) > 0 {
+		firstComment = commentLines[0]
+	}
+	codeContent := strings.Join(e.lines, "\n")
+	instruction := "Write code based on this description, but do not write a lengthy explanation; if necessary, only include brief comments before the code:\n"
+	if firstComment != "" {
+		instruction += firstComment + "\n"
+	}
+	instruction += "\nThe content of the editable file\n" + codeContent
+	e.llmQuery(instruction)
+}
+
 // llmQuery sends a query to the LLM.
 // llmQuery отправляет запрос LLM.
 func (e *Editor) llmQuery(instruction string) {
+	defer func() {
+		e.selectAllBeforeLLM = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	}()
 	if strings.TrimSpace(e.llmProvider) == "" {
 		e.llmProvider = "ollama"
-
 	}
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
-
 	}
 	if strings.TrimSpace(e.llmKey) == "" {
 		e.llmKey = ""
-
 	}
 	payload := instruction
 	if cb, err := clipboard.ReadAll(); err == nil {
 		cb = strings.TrimSpace(cb)
 		if cb != "" {
-			payload = payload + "\nДанные из БО:\n" + cb
+			payload = payload + "\nData from clipboard:\n" + cb
 		}
 	}
-	visible := e.getVisibleText()
-	if strings.TrimSpace(visible) != "" {
-		payload = payload + "\nИмеющийся текст:\n" + visible
+	if e.selectAllBeforeLLM {
+		allText := strings.Join(e.lines, "\n")
+		if strings.TrimSpace(allText) != "" {
+			payload = payload + "\nExisting text:\n" + allText
+		}
 	}
 
-	// If you do not have a program for interacting with the LLM,
-	// I recommend using Tgpt, which can be installed from the MacOS terminal: brew install tgpt.
-	// Если у Вас нет программы для взаимодействия с LLM, рекомендую
-	// использовать Tgpt, которую можно установить из терминала MacOS: brew install tgpt.
-
+	// Выполняем вызов LLM
+	// Установка TGPT командой: brew install tgpt
 	cmd := exec.Command("tgpt", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, "--key", e.llmKey, payload)
 	out, err := cmd.Output()
+
 	if err != nil {
 		e.statusMessage("LLM error: " + err.Error())
 		return
 	}
 	resp := string(out)
 	if strings.TrimSpace(resp) == "" {
-		e.statusMessage("LLM вернула пустой ответ")
+		e.statusMessage("LLM returned an empty response")
 		return
 	}
 	e.insertLLMResponse(resp)
@@ -1080,7 +1958,7 @@ func (e *Editor) insertLLMResponse(resp string) {
 func (e *Editor) openFile(path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		e.statusMessage("Не удается открыть файл: " + err.Error())
+		e.statusMessage("Unable to open the file: " + err.Error())
 		return
 	}
 	content := string(data)
@@ -1136,7 +2014,7 @@ func main() {
 		return
 	}
 	if err := editor.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "Ошибка запуска редактора:", err)
+		fmt.Fprintln(os.Stderr, "Editor startup error:", err)
 	}
 }
 
