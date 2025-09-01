@@ -1,9 +1,108 @@
 # editor
-# Текстовый редактор
+# Text Editor
 
 [![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
+[![Go version](https://img.shields.io/badge/go-go1.24.6-brightgreen?style=flat-square&logo=go&logoColor=white)](
+https://golang.org/dl/)
 
-Это текстовый редактор для работы в терминале, написанный на языке Go, с использованием библиотеки `tcell/v2` для работы с терминалом. Он поддерживает основные функции редактирования, синтаксическую подсветку для множества языков программирования и интеграцию с LLM (Large Language Models) через внешнюю программу `cogitor`.
+This is a terminal-based text editor written in Go, utilizing the `tcell/v2` library for terminal interaction. It supports basic editing functions, syntax highlighting for numerous programming languages, and integration with LLM (Large Language Models) via an external program called `tgpt`.
+
+## Features
+
+*   **Text Editing:** Multiline editing, navigation with keys (arrow keys, Home, End, PgUp, PgDn), insertion, deletion, file creation, and opening.
+*   **Syntax Highlighting:** Supports syntax highlighting for the following languages: C, C++, Assembly, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp.
+*   **Search:** Text search within a file.
+*   **Navigation:** Jump to a specific line.
+*   **Undo/Redo:** Supports undo and redo operations.
+*   **Clipboard:** Cut, copy, and paste (uses system clipboard via `atotto/clipboard` library).
+*   **LLM Integration:** Allows sending instructions and text from the editor to the external `tgpt` program for interacting with LLMs. Buffer contents and visible text can be automatically included in requests.
+*   **Status Bar:** Displays filename, language, cursor position (line and column), and hotkey hints.
+
+## Installation
+
+1.  Ensure you have Go installed (https://golang.org/dl/).
+2.  Install necessary dependencies:
+    ```bash
+    go mod init <module_name> # If creating a new module
+    go get github.com/atotto/clipboard
+    go get github.com/gdamore/tcell/v2
+    go get github.com/mattn/go-runewidth
+    ```
+    (Or simply run `go mod tidy` if `go.mod` already exists).
+3.  Compile the program:
+    ```bash
+    go build -o editor main.go # Replace main.go with the path to your code file if different
+    ```
+4.  To enable LLM functionality, install and configure the external `tgpt` program (or modify the code to use a different program as described in the comments).
+
+## Usage
+
+Run the compiled file:
+
+```bash
+./editor  [flags] [file_path]
+```
+
+### Flags
+
+*   `-provider string`: LLM provider (defaults to value from environment variable `LLM_PROVIDER`).
+*   `-model string`: LLM model (defaults to value from environment variable `LLM_MODEL`).
+*   `-path string`: Path to open a specific file.
+*   `-v, -version`: Show editor version.
+*   `-h, --help`: Show extended help.
+
+If no file path is specified in the flags, it can be passed as the first positional argument.
+
+### Hotkeys
+
+- Arrow keys: move cursor
+- Home/End, PgUp/PgDn: text navigation
+- Ctrl-A: select all (and other selection options)
+- Ctrl-F: search text
+- Ctrl-G: go to line
+- Ctrl-S: save file
+- Ctrl-O: open file
+- Ctrl-N: new file
+- Ctrl-Q: quit
+- Ctrl-X: cut current line
+- Ctrl-C: copy to clipboard
+- Ctrl-V: paste from clipboard
+- Ctrl-P: generate text/code based on description
+- Ctrl-L: send request to LLM (and insert response)
+
+
+## Version
+
+Current version: 1.2.0
+
+## Dependencies
+
+*   `github.com/atotto/clipboard`
+*   `github.com/gdamore/tcell/v2`
+*   `github.com/mattn/go-runewidth`
+
+## License
+
+This project is licensed under the BSD 3-Clause License — see details in the [LICENSE](LICENSE) file.
+
+## Notes
+
+*   The code contains comments in Russian.
+*   It uses the external command `tgpt` for LLM interaction (install via `brew install tgpt`, https://github.com/aandrew-me/tgpt). If unavailable, you can try replacing it with another.
+*   The editor has a fixed window size (115x34), defined in the code (`contentWidth`, `contentHeight`).
+*   The program has been tested on macOS 15.6.
+
+## Contact Information
+
+For questions or suggestions, contact: [skala.skalolaz.1970@gmail.com]
+
+See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
+
+
+# editor
+# Текстовый редактор
+
+Это текстовый редактор для работы в терминале, написанный на языке Go, с использованием библиотеки `tcell/v2` для работы с терминалом. Он поддерживает основные функции редактирования, синтаксическую подсветку для множества языков программирования и интеграцию с LLM (Large Language Models) через внешнюю программу `tgpt`.
 
 ## Возможности
 
@@ -38,7 +137,7 @@
 Запустите скомпилированный файл:
 
 ```bash
-./editor [путь_к_файлу] [флаги]
+./editor  [флаги] [путь_к_файлу]
 ```
 
 ### Флаги
@@ -53,25 +152,25 @@
 
 ### Горячие клавиши
 
-*   **Ctrl-S:** Сохранить файл.
-*   **Ctrl-Q:** Выход из редактора (с запросом на сохранение, если файл изменен).
-*   **Ctrl-F:** Поиск текста.
-*   **Ctrl-G:** Перейти к строке.
-*   **Ctrl-U:** Отменить (Undo).
-*   **Ctrl-Y:** Повторить (Redo).
-*   **Ctrl-K:** Вырезать текущую строку.
-*   **Ctrl-O:** Открыть файл.
-*   **Ctrl-N:** Создать новый файл.
-*   **Ctrl-L:** Отправить инструкцию LLM (через `tgpt`).
-*   **Стрелки:** Перемещение курсора.
-*   **Home/End:** Перемещение в начало/конец строки.
-*   **PgUp/PgDn:** Перемещение на страницу вверх/вниз.
-*   **Enter:** Вставить новую строку.
-*   **Backspace:** Удалить символ перед курсором.
+- Стрелки: перемещение курсора
+- Home/End, PgUp/PgDn: навигация по тексту
+- Ctrl-A: выделение всего (и другие варианты выделения)
+- Ctrl-F: поиск текста
+- Ctrl-G: перейти к строке
+- Ctrl-S: сохранить файл
+- Ctrl-O: открыть файл
+- Ctrl-N: новый файл
+- Ctrl-Q: выход
+- Ctrl-X: вырезать текущую строку
+- Ctrl-C: копировать в буфер обмена
+- Ctrl-V: вставить из буфера обмена
+- Ctrl-P: сгенерировать текст/код на основе описания
+- Ctrl-L: отправить запрос к LLM (и вставить ответ)
+
 
 ## Версия
 
-Текущая версия: 1.1.2
+Текущая версия: 1.2.0
 
 ## Зависимости
 
@@ -86,7 +185,7 @@
 ## Примечания
 
 *   Код содержит комментарии на русском языке.
-*   Для работы с LLM используется внешняя команда `tgpt` (brew install tgpt) https://github.com/aandrew-me/tgpt. Если она недоступна, можно попробовать заменить её на иную (см. комментарии в функции `llmQuery`).
+*   Для работы с LLM используется внешняя команда `tgpt` (brew install tgpt) https://github.com/aandrew-me/tgpt. Если она недоступна, можно попробовать заменить её на иную.
 *   Редактор имеет фиксированный размер окна (115x34), определяемый в коде (`contentWidth`, `contentHeight`).
 *   Проверка кода программы была произведена на ОС macOS 15.6 
 
@@ -95,101 +194,3 @@
 Если есть вопросы или предложения обращайтесь по адресу: [skala.skalolaz.1970@gmail.com]
 
 Смотрите [CREDITS.md](CREDITS.md) — благодарности и информация о зависимостях.
-
-# Editor
-# Text Editor
-
-[![License](https://img.shields.io/badge/license-BSD%203--Clause-blue.svg)](LICENSE)
-
-This is a terminal-based text editor written in Go, utilizing the `tcell/v2` library for terminal interactions. It supports basic editing functions, syntax highlighting for many programming languages, and integration with LLMs (Large Language Models) via an external program `cogitor`.
-
-## Features
-
-*   **Text Editing:** Multiline editing, navigation via keys (arrows, Home, End, PgUp, PgDn), inserting, deleting, creating, and opening files.
-*   **Syntax Highlighting:** Supports syntax highlighting for the following languages: C, C++, Assembly, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp.
-*   **Search:** Search through the file text.
-*   **Navigation:** Jump to a specific line.
-*   **Undo/Redo:** Support for undo (`Undo`) and redo (`Redo`) operations.
-*   **Clipboard:** Cut, copy, and paste text (uses system clipboard via `atotto/clipboard` library).
-*   **LLM Integration:** Ability to send instructions and text from the editor to an external `tgpt` program for interaction with LLMs. Data from the clipboard and the visible part of the text can be automatically added to the request.
-*   **Status Bar:** Displays file name, language, line and column number, as well as hotkey hints.
-
-## Installation
-
-1.  Ensure Go is installed (https://golang.org/dl/).
-2.  Install necessary dependencies:
-    ```bash
-    go mod init <module_name> # If creating a new module
-    go get github.com/atotto/clipboard
-    go get github.com/gdamore/tcell/v2
-    go get github.com/mattn/go-runewidth
-    ```
-    (Or just use `go mod tidy` if `go.mod` already exists).
-3.  Compile the program:
-    ```bash
-    go build -o editor main.go # Replace main.go with your code file if different
-    ```
-4.  To work with LLMs, install and configure the external `tgpt` program (or modify the code to use another program as noted in comments).
-
-## Usage
-
-Run the compiled file:
-
-```bash
-./editor [file_path] [flags]
-```
-
-### Flags
-
-*   `-provider string`: LLM provider (defaults from environment variable `LLM_PROVIDER`).
-*   `-model string`: LLM model (defaults from environment variable `LLM_MODEL`).
-*   `-path string`: Path to the file to open.
-*   `-v, -version`: Show editor version.
-*   `-h, --help`: Show extended help.
-
-If the file path isn't specified in flags, it can be provided as the first command-line argument.
-
-### Hotkeys
-
-*   **Ctrl-S:** Save the file.
-*   **Ctrl-Q:** Exit the editor (prompt to save if the file has been modified).
-*   **Ctrl-F:** Search text.
-*   **Ctrl-G:** Go to line.
-*   **Ctrl-U:** Undo.
-*   **Ctrl-Y:** Redo.
-*   **Ctrl-K:** Cut the current line.
-*   **Ctrl-O:** Open file.
-*   **Ctrl-N:** Create a new file.
-*   **Ctrl-L:** Send instruction to LLM (via `tgpt`).
-*   **Arrow keys:** Move cursor.
-*   **Home/End:** Move to start/end of line.
-*   **PgUp/PgDn:** Scroll up/down a page.
-*   **Enter:** Insert new line.
-*   **Backspace:** Delete character before cursor.
-
-## Version
-
-Current version: 1.1.2
-
-## Dependencies
-
-*   `github.com/atotto/clipboard`
-*   `github.com/gdamore/tcell/v2`
-*   `github.com/mattn/go-runewidth`
-
-## License
-
-This project is licensed under the BSD 3-Clause License — see the [LICENSE](LICENSE) file for details.
-
-## Notes
-
-*   The code contains comments in Russian.
-*   The LLM interaction uses an external command `tgpt` (install via `brew install tgpt`) https://github.com/aandrew-me/tgpt. If unavailable, it can be replaced with another as noted in the `llmQuery` function comments.
-*   The editor window size is fixed (115x34), defined in the code (`contentWidth`, `contentHeight`).
-*   The code has been tested on macOS 15.6.
-
-## Contact Information
-
-For questions or suggestions, contact: [skala.skalolaz.1970@gmail.com]
-
-See also [CREDITS.md](CREDITS.md) — acknowledgments and information on dependencies.
