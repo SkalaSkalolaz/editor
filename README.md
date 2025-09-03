@@ -69,11 +69,15 @@ If no file path is specified in the flags, it can be passed as the first positio
 - Ctrl-V: paste from clipboard
 - Ctrl-P: generate text/code based on description
 - Ctrl-L: send request to LLM (and insert response)
+- Ctrl-B Select line-by-line (from cursor)
+- Ctrl-P Generates program code based on description
+- Ctrl-R Runs the program code
+
 
 
 ## Version
 
-Current version: 1.2.0
+Current version: 1.3.0
 
 ## Dependencies
 
@@ -166,11 +170,14 @@ See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
 - Ctrl-V: вставить из буфера обмена
 - Ctrl-P: сгенерировать текст/код на основе описания
 - Ctrl-L: отправить запрос к LLM (и вставить ответ)
+- Ctrl-B  Выделить по строчно (от курсора)
+- Ctrl-P  Генерирует код программы на основе описания
+- Ctrl-R  Запускает код программы
 
 
 ## Версия
 
-Текущая версия: 1.2.0
+Текущая версия: 1.3.0
 
 ## Зависимости
 
