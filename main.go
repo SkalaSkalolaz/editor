@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -17,7 +19,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.2"
+const Version = "1.3"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -63,41 +65,43 @@ func printVersion() {
 // printUsageExtended prints the extended help information.
 // printUsageExtended выводит расширенную справку.
 func printUsageExtended() {
-	fmt.Println("Editor - расширенная справка")
-	fmt.Println("Usage: editor [path] [flags]")
+	fmt.Println("Editor - extended help")
+	fmt.Println("Usage: editor  [flags] [path]")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  -provider string   LLM provider ")
-	fmt.Println("  -model string      LLM model ")
-	fmt.Println("  -h, --help        Показать эту справку и использование.")
-	fmt.Println("  -v, --version     Показать версию программы.")
+	fmt.Println("  -provider string   LLM provider {default: ollama}")
+	fmt.Println("  -model string      LLM model    {default: gemma3:4b}")
+	fmt.Println("  -h, --help         Show this help and usage.")
+	fmt.Println("  -v, --version      Show the program version.")
 	fmt.Println()
-	fmt.Println("Особенности:")
-	fmt.Println("  - Терминальный текстовый редактор с поддержкой многострочного редактирования, курсорной навигации,")
-	fmt.Println("    отмены/повтора (undo/redo), вырезания/копирования/вставки, поиска, перехода к строке,")
-	fmt.Println("    и опциональной интеграции с LLM через cogitor.")
-	fmt.Println("  - Интеграция LLM: вызывается внешний cogitor при настройке provider/model.")
+	fmt.Println("Features:")
+	fmt.Println("  - Text editor with support for multiline editing, cursor navigation,")
+	fmt.Println("    undo/redo, cut/copy/paste, search, go to line,")
+	fmt.Println("    and optional integration with LLM via tgpt.")
+	fmt.Println("  - LLM integration: an external tgpt is invoked when configuring provider/model.")
 	fmt.Println()
-	fmt.Println("Горячие клавиши:")
-	fmt.Println("  Ctrl-L  Отправить указание для LLM")
-	fmt.Println("  Ctrl-P  Генерирует текст или код на основе описания\n          (в виде коментария)")
-	fmt.Println("  Ctrl-S  Сохранить файл")
-	fmt.Println("  Ctrl-O  Открыть файл")
-	fmt.Println("  Ctrl-N  Новый файл")
-	fmt.Println("  Ctrl-Q  Выход из редактора")
-	fmt.Println("  Ctrl-F  Поиск текста")
-	fmt.Println("  Ctrl-G  Перейти к строке")
-	fmt.Println("  Ctrl-Z  Отменить")
-	fmt.Println("  Ctrl-E  Вернуть отменённое")
-	fmt.Println("  Ctrl-X  Убрать текущую строку")
-	fmt.Println("  Ctrl-A  Выделить все")
-	fmt.Println("  Ctrl-C  Копировать в буфер обмена")
-	fmt.Println("  Ctrl-V  Вставить буфер обмена")
-	fmt.Println("Навигация:")
-	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
+	fmt.Println("Hotkeys:")
+	fmt.Println("  Ctrl-L  Send instruction to LLM")
+	fmt.Println("  Ctrl-P  Generates program code based on description\n          (as a comment)")
+	fmt.Println("  Ctrl-R  Runs the program code; if there is an error in the code - \n          recommendations for fixing it")
+	fmt.Println("  Ctrl-S  Save file")
+	fmt.Println("  Ctrl-O  Open file")
+	fmt.Println("  Ctrl-N  New file")
+	fmt.Println("  Ctrl-Q  Exit editor")
+	fmt.Println("  Ctrl-F  Find text")
+	fmt.Println("  Ctrl-G  Go to line")
+	fmt.Println("  Ctrl-Z  Undo")
+	fmt.Println("  Ctrl-E  Redo")
+	fmt.Println("  Ctrl-X  Remove current line")
+	fmt.Println("  Ctrl-A  Select all")
+	fmt.Println("  Ctrl-B  Select lines from cursor")
+	fmt.Println("  Ctrl-C  Copy to clipboard")
+	fmt.Println("  Ctrl-V  Paste from clipboard")
+	fmt.Println("Navigation:")
+	fmt.Println("  Arrows: move the cursor, Home/End, PgUp/PgDn — navigate the text")
 	fmt.Println()
-	fmt.Println("Примеры:")
-	fmt.Println("  editor -provider pollinations -model openai -path /path/to/file.txt")
+	fmt.Println("Examples:")
+	fmt.Println("  editor --provider pollinations --model openai /path/to/file.txt")
 	fmt.Println("  editor file.txt")
 }
 
@@ -1027,8 +1031,8 @@ func (e *Editor) statusBar() (string, string, string) {
 		lineRunes[pos] = r
 	}
 	top := string(lineRunes)
-	bottom2 := "CTRL     ^L Prompt LLM   ^O Open file   ^N New file   ^S Save file   ^Q Quit     ^F Find text   ^G Go to line"
-	bottom1 := "         ^P Generates    ^C Copy to     ^V Insert     ^A All         ^X Remove   ^Z Cancel      ^E Return     "
+	bottom2 := "CTRL    ^L Prompt LLM  ^R Run  ^O Open file  ^N New file  ^S Save file  ^Q Quit    ^F Find text  ^G Go to line   "
+	bottom1 := "        ^P Generates   ^A All  ^C Copy to    ^V Insert    ^X Remove     ^Z Cancel  ^E Return     ^B Select lines "
 
 	return top, bottom1, bottom2
 }
@@ -1082,6 +1086,110 @@ func (e *Editor) pasteFromClipboard() {
 	e.ensureVisible()
 }
 
+// Добавляем новую функцию обработки
+func (e *Editor) handleRunCode() {
+	code := strings.Join(e.lines, "\n")
+
+	// Запрашиваем у LLM JSON-ответ с инструкцией вернуть поля: language, flags, args
+	analysisQuery := "Analyze this code and return a JSON object with fields: language, flags, and args to run the code. The JSON must be exactly in the format: {\"language\":\"<lang>\",\"flags\":\"<flags>\",\"args\":\"<args>\"}. Provide no extra text. Code:\n" + code
+	analysis, err := e.llmQueryWithoutInsert(analysisQuery)
+	if err != nil {
+		e.statusMessage("Parsing error: " + err.Error())
+		return
+	}
+
+	// Определяем структуру для парсинга JSON
+	type llmResponse struct {
+		Language string `json:"language"`
+		Flags    string `json:"flags"`
+		Args     string `json:"args"`
+	}
+
+	var resp llmResponse
+
+	// Попытка строгого парсинга JSON
+	if err := json.Unmarshal([]byte(analysis), &resp); err != nil {
+		// Попытка извлечь JSON-пayload из текста, если LLM ответил вместе с текстом
+		s := strings.TrimSpace(analysis)
+		start := strings.IndexByte(s, '{')
+		end := strings.LastIndexByte(s, '}')
+		if start != -1 && end != -1 && end >= start {
+			if err2 := json.Unmarshal([]byte(s[start:end+1]), &resp); err2 != nil {
+				e.statusMessage("Invalid JSON from LLM: " + err2.Error())
+				return
+			}
+		} else {
+			e.statusMessage("Invalid JSON from LLM: " + err.Error())
+			return
+		}
+	}
+
+	lang := strings.TrimSpace(resp.Language)
+	flags := strings.TrimSpace(resp.Flags)
+	args := strings.TrimSpace(resp.Args)
+
+	if lang == "" {
+		lang = "go"
+	}
+
+	// Запуск кода с параметрами из JSON
+	stdout, stderr, runErr := e.runCodeViaRuncode(code, lang, flags, args)
+	if runErr != nil {
+		errorQuery := "Analyze the error and suggest corrections for the code: Error: " + runErr.Error() + "\nStderr: " + stderr + "\nCode:\n" + code
+		fixes, err2 := e.llmQueryWithoutInsert(errorQuery)
+		if err2 != nil {
+			e.statusMessage("Error obtaining corrections:" + err2.Error())
+			return
+		}
+		e.insertLLMResponse("\n\n// Recommendations for correction:\n" + fixes)
+	} else {
+		e.insertLLMResponse("\n\n// Execution result:\n" + stdout)
+	}
+}
+
+// Добавляем функцию для запроса без вставки
+func (e *Editor) llmQueryWithoutInsert(instruction string) (string, error) {
+	if strings.TrimSpace(e.llmProvider) == "" {
+		e.llmProvider = "ollama"
+	}
+	if strings.TrimSpace(e.llmModel) == "" {
+		e.llmModel = "gemma3:4b"
+	}
+
+	cmd := exec.Command("tgpt", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, instruction)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// Добавляем функцию запуска кода
+func (e *Editor) runCodeViaRuncode(code string, lang string, flags string, args string) (string, string, error) {
+	binPath := "run"
+	cmdArgs := []string{}
+
+	if flags != "" {
+		cmdArgs = append(cmdArgs, "--flag", flags)
+	}
+	if args != "" {
+		cmdArgs = append(cmdArgs, "--args", args)
+	}
+	if lang != "" {
+		cmdArgs = append(cmdArgs, "--lang", lang)
+	}
+
+	cmd := exec.Command(binPath, cmdArgs...)
+	cmd.Stdin = strings.NewReader(code)
+
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err := cmd.Run()
+	return stdoutBuf.String(), stderrBuf.String(), err
+}
+
 // handleKey handles keyboard input.
 // handleKey обрабатывает ввод с клавиатуры.
 func (e *Editor) handleKey(ev *tcell.EventKey) {
@@ -1096,11 +1204,36 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	shiftPressed := ev.Modifiers()&tcell.ModShift != 0
 
 	switch ev.Key() {
+	case tcell.KeyCtrlR:
+		e.handleRunCode()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyCtrlB:
+		if !e.selecting {
+			e.selecting = true
+			e.startLineSelection()
+			currentCy := e.cy
+			endLine := currentCy + 1
+			if endLine >= len(e.lines) {
+				endLine = len(e.lines) - 1
+			}
+			e.cy = endLine
+			lastLine := ""
+			if endLine >= 0 && endLine < len(e.lines) {
+				lastLine = e.lines[endLine]
+			}
+			e.cx = len([]rune(lastLine))
+			e.ensureVisible()
+		}
+		e.ctrlAState = false
+		e.selectAllBeforeLLM = true
 	case tcell.KeyCtrlA:
 		if !e.selecting {
 			e.selecting = true
 			e.selectStartX = 0
 			e.selectStartY = 0
+			e.startLineSelection()
 			e.cy = len(e.lines) - 1
 			if e.cy < 0 {
 				e.cy = 0
@@ -1269,11 +1402,6 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlLState = false
 
 	case tcell.KeyUp:
-		if shiftPressed {
-			e.startLineSelection()
-		} else if e.selecting {
-			e.endSelection()
-		}
 		if e.cy > 0 {
 			e.cy--
 			curRunes := []rune(e.lines[e.cy])
@@ -1286,11 +1414,6 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlPState = false
 		e.ctrlLState = false
 	case tcell.KeyDown:
-		if shiftPressed {
-			e.startLineSelection()
-		} else if e.selecting {
-			e.endSelection()
-		}
 		if e.cy < len(e.lines)-1 {
 			e.cy++
 			curRunes := []rune(e.lines[e.cy])
@@ -1436,7 +1559,13 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 			e.insertRune(r)
 			e.ctrlAState = false
 		}
-
+		// Если нажата любая другая клавиша (не модификатор), сбрасываем выделение
+		// Это нужно для клавиш как PageUp, PageDown и др., которые могут не обрабатываться выше
+		// Но нужно быть осторожным, чтобы не сбросить выделение при нажатии Shift+другая_клавиша
+		// Лучше явно обрабатывать сброс в нужных местах, как выше.
+		// if !shiftPressed && ev.Key() != tcell.KeyShift && e.selecting {
+		//     e.endSelection()
+		// }
 	}
 	e.ensureVisible()
 }
@@ -1864,7 +1993,7 @@ func (e *Editor) sendCommentToLLM() {
 		firstComment = commentLines[0]
 	}
 	codeContent := strings.Join(e.lines, "\n")
-	instruction := "Write code based on this description, but do not write a lengthy explanation; if necessary, only include brief comments before the code:\n"
+	instruction := "Write code based on this description, but do not write a lengthy explanation; the existing code does not need to be repeated, only in accordance with the instruction; if necessary, only include brief comments before the code:\n"
 	if firstComment != "" {
 		instruction += firstComment + "\n"
 	}
@@ -1904,7 +2033,7 @@ func (e *Editor) llmQuery(instruction string) {
 	}
 
 	// Выполняем вызов LLM
-	// Установка TGPT командой: brew install tgpt
+
 	cmd := exec.Command("tgpt", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, "--key", e.llmKey, payload)
 	out, err := cmd.Output()
 
