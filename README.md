@@ -5,9 +5,6 @@
 [![Go version](https://img.shields.io/badge/go-go1.24.6-brightgreen?style=flat-square&logo=go&logoColor=white)](
 https://golang.org/dl/)
 
-# editor
-# Text editor
-
 It is a text editor for working in the terminal, written in the Go language, using the tcell/v2 library for working with the terminal. It supports basic editing functions, syntax highlighting for multiple programming languages, and integration with LLM (Large Language Models).
 
 ## Features
