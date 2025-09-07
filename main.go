@@ -2,13 +2,22 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -19,7 +28,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.3"
+const Version = "1.6.2"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -65,43 +74,44 @@ func printVersion() {
 // printUsageExtended prints the extended help information.
 // printUsageExtended выводит расширенную справку.
 func printUsageExtended() {
-	fmt.Println("Editor - extended help")
-	fmt.Println("Usage: editor  [flags] [path]")
+	fmt.Println("Editor - расширенная справка")
+	fmt.Println("Usage: editor  [provider] [model] [path]")
 	fmt.Println()
+	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
 	fmt.Println("Flags:")
-	fmt.Println("  -provider string   LLM provider {default: ollama}")
-	fmt.Println("  -model string      LLM model    {default: gemma3:4b}")
-	fmt.Println("  -h, --help         Show this help and usage.")
-	fmt.Println("  -v, --version      Show the program version.")
+	fmt.Println("  -h, --help         Показать эту справку и использование.")
+	fmt.Println("  -v, --version      Показать версию программы.")
 	fmt.Println()
-	fmt.Println("Features:")
-	fmt.Println("  - Text editor with support for multiline editing, cursor navigation,")
-	fmt.Println("    undo/redo, cut/copy/paste, search, go to line,")
-	fmt.Println("    and optional integration with LLM via tgpt.")
-	fmt.Println("  - LLM integration: an external tgpt is invoked when configuring provider/model.")
+	fmt.Println("Особенности:")
+	fmt.Println("  - Текстовый редактор с поддержкой многострочного редактирования, курсорной навигации,")
+	fmt.Println("    отмены/повтора (undo/redo), вырезания/копирования/вставки, поиска, перехода к строке,")
+	fmt.Println("    и опциональной интеграции с LLM.")
+	fmt.Println("  - Интеграция LLM: вызывается при настройке provider/model.")
 	fmt.Println()
-	fmt.Println("Hotkeys:")
-	fmt.Println("  Ctrl-L  Send instruction to LLM")
-	fmt.Println("  Ctrl-P  Generates program code based on description\n          (as a comment)")
-	fmt.Println("  Ctrl-R  Runs the program code; if there is an error in the code - \n          recommendations for fixing it")
-	fmt.Println("  Ctrl-S  Save file")
-	fmt.Println("  Ctrl-O  Open file")
-	fmt.Println("  Ctrl-N  New file")
-	fmt.Println("  Ctrl-Q  Exit editor")
-	fmt.Println("  Ctrl-F  Find text")
-	fmt.Println("  Ctrl-G  Go to line")
-	fmt.Println("  Ctrl-Z  Undo")
-	fmt.Println("  Ctrl-E  Redo")
-	fmt.Println("  Ctrl-X  Remove current line")
-	fmt.Println("  Ctrl-A  Select all")
-	fmt.Println("  Ctrl-B  Select lines from cursor")
-	fmt.Println("  Ctrl-C  Copy to clipboard")
-	fmt.Println("  Ctrl-V  Paste from clipboard")
-	fmt.Println("Navigation:")
-	fmt.Println("  Arrows: move the cursor, Home/End, PgUp/PgDn — navigate the text")
+	fmt.Println("Горячие клавиши:")
+	fmt.Println("  Ctrl-L  Отправить указание для LLM")
+	fmt.Println("  Ctrl-P  Генерирует код программы на основе описания\n          (в виде коментария)")
+	fmt.Println("  Ctrl-R  Запускает код программы, при ошибке в коде - \n          рекомендации по их исправлению")
+	fmt.Println("          Поддерживаемые языки: c, cpp, assembly, fortran, go, \n          python, ruby, kotlin, swift, html, lisp")
+	fmt.Println("  Ctrl-S  Сохранить файл")
+	fmt.Println("  Ctrl-O  Открыть файл")
+	fmt.Println("  Ctrl-N  Новый файл")
+	fmt.Println("  Ctrl-Q  Выход из редактора")
+	fmt.Println("  Ctrl-F  Поиск текста")
+	fmt.Println("  Ctrl-G  Перейти к строке")
+	fmt.Println("  Ctrl-Z  Отменить")
+	fmt.Println("  Ctrl-E  Вернуть отменённое")
+	fmt.Println("  Ctrl-X  Убрать текущую строку")
+	fmt.Println("  Ctrl-A  Выделить все")
+	fmt.Println("  Ctrl-B  Выделить по строчно (от курсора)")
+	fmt.Println("  Ctrl-C  Копировать в буфер обмена")
+	fmt.Println("  Ctrl-V  Вставить буфер обмена")
+	fmt.Println("  Ctrl-T  Терминал ОС (печать ответа в canvas)")
+	fmt.Println("Навигация:")
+	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
 	fmt.Println()
-	fmt.Println("Examples:")
-	fmt.Println("  editor --provider pollinations --model openai /path/to/file.txt")
+	fmt.Println("Примеры:")
+	fmt.Println("  editor pollinations openai /path/to/file.txt")
 	fmt.Println("  editor file.txt")
 }
 
@@ -162,6 +172,12 @@ type Editor struct {
 	selectStartY       int
 	selecting          bool
 	lineSelecting      bool
+	terminalPrompt     *TerminalPrompt
+}
+
+type TerminalPrompt struct {
+	Value    string
+	Callback func(string)
 }
 
 // NewEditor creates a new Editor instance.
@@ -228,6 +244,39 @@ func detectLanguage(filename string) Language {
 	default:
 		return LangUnknown
 	}
+}
+
+func splitArgs(raw string) []string {
+	var args []string
+	var cur []rune
+	inDouble := false
+	inSingle := false
+	escaped := false
+
+	for _, r := range raw {
+		switch {
+		case escaped:
+			cur = append(cur, r)
+			escaped = false
+		case r == '\\':
+			escaped = true
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == ' ' && !inDouble && !inSingle:
+			if len(cur) > 0 {
+				args = append(args, string(cur))
+				cur = nil
+			}
+		default:
+			cur = append(cur, r)
+		}
+	}
+	if len(cur) > 0 {
+		args = append(args, string(cur))
+	}
+	return args
 }
 
 // filepathExt returns the file extension.
@@ -303,7 +352,7 @@ func (e *Editor) wrapLine(line string) []string {
 	var parts []string
 	var currentWidth int
 	var start int
-	tabWidth := 4 // Assuming tab width is 4 spaces
+	tabWidth := 4
 
 	for i, r := range runes {
 		var rw int
@@ -500,6 +549,43 @@ func (e *Editor) render() {
 	display := e.buildDisplayBuffer()
 	total := len(display)
 	topLine, bottomLine1, bottomLine2 := e.statusBar()
+	if e.terminalPrompt != nil {
+		user, err := user.Current()
+		username := "user"
+		if err == nil && user.Username != "" {
+			username = user.Username
+		}
+
+		hostname, err := os.Hostname()
+		if err != nil || hostname == "" {
+			hostname = "host"
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			cwd = "?"
+		} else {
+			cwd, err = filepath.Abs(cwd)
+			if err != nil {
+				cwd = "?"
+			}
+		}
+		promptPrefix := username + "@" + hostname + " " + cwd + " % "
+		fullText := promptPrefix + e.terminalPrompt.Value
+		wrapped := wrapText(fullText, e.contentWidth)
+		n := len(wrapped)
+		if n == 0 {
+			bottomLine1 = ""
+			bottomLine2 = ""
+		} else if n == 1 {
+			bottomLine1 = ""
+			bottomLine2 = wrapped[0]
+		} else {
+			bottomLine2 = wrapped[n-2]
+			bottomLine1 = wrapped[n-1]
+		}
+	}
+
 	tRunes := []rune(topLine)
 	for x := 0; x < e.contentWidth; x++ {
 		var ch rune = ' '
@@ -692,7 +778,7 @@ func (e *Editor) render() {
 		if numLinesToShow > 4 {
 			numLinesToShow = 4
 		}
-		startScreenRow := e.contentHeight - 3 - numLinesToShow
+		startScreenRow := e.contentHeight - 2 - numLinesToShow
 		if startScreenRow < 1 {
 			startScreenRow = 1
 			if len(wrappedLines) > (e.contentHeight - 2) {
@@ -741,7 +827,6 @@ func (e *Editor) render() {
 			}
 		}
 	}
-	// bRunes := []rune(bottomLine1)
 	y1 := e.contentHeight - 1
 	b1 := []rune(bottomLine1)
 	x := 0
@@ -1031,8 +1116,8 @@ func (e *Editor) statusBar() (string, string, string) {
 		lineRunes[pos] = r
 	}
 	top := string(lineRunes)
-	bottom2 := "CTRL    ^L Prompt LLM  ^R Run  ^O Open file  ^N New file  ^S Save file  ^Q Quit    ^F Find text  ^G Go to line   "
-	bottom1 := "        ^P Generates   ^A All  ^C Copy to    ^V Insert    ^X Remove     ^Z Cancel  ^E Return     ^B Select lines "
+	bottom2 := "^L Prompt    ^R Run code  ^N New file  ^O Open file ^S Save file ^Q Quit file ^F Find text ^G Go to line"
+	bottom1 := "^P Generates ^C Copy      ^V Insert    ^B Select    ^A All       ^X Remove    ^Z Cancel    ^E Return    ^T Terminal"
 
 	return top, bottom1, bottom2
 }
@@ -1086,30 +1171,28 @@ func (e *Editor) pasteFromClipboard() {
 	e.ensureVisible()
 }
 
-// Добавляем новую функцию обработки
 func (e *Editor) handleRunCode() {
 	code := strings.Join(e.lines, "\n")
+	analysisQuery := "Analyze this code and return a JSON object with fields: language, flags, and args to run the" +
+		"code (if the argument of the program is necessary for its correct launch, then come up with it yourself, based on" +
+		"the requirements of the code, but do not specify the flags of the program name, for example: -o multiplication)." +
+		" The JSON must be exactly in the format: {\"language\":\"<lang>\",\"flags\":\"<flags>\",\"args\":\"<args>\"}." +
+		" Provide no extra text. Code:\n" + code
 
-	// Запрашиваем у LLM JSON-ответ с инструкцией вернуть поля: language, flags, args
-	analysisQuery := "Analyze this code and return a JSON object with fields: language, flags, and args to run the code. The JSON must be exactly in the format: {\"language\":\"<lang>\",\"flags\":\"<flags>\",\"args\":\"<args>\"}. Provide no extra text. Code:\n" + code
 	analysis, err := e.llmQueryWithoutInsert(analysisQuery)
 	if err != nil {
 		e.statusMessage("Parsing error: " + err.Error())
 		return
 	}
 
-	// Определяем структуру для парсинга JSON
 	type llmResponse struct {
 		Language string `json:"language"`
 		Flags    string `json:"flags"`
 		Args     string `json:"args"`
 	}
-
 	var resp llmResponse
 
-	// Попытка строгого парсинга JSON
 	if err := json.Unmarshal([]byte(analysis), &resp); err != nil {
-		// Попытка извлечь JSON-пayload из текста, если LLM ответил вместе с текстом
 		s := strings.TrimSpace(analysis)
 		start := strings.IndexByte(s, '{')
 		end := strings.LastIndexByte(s, '}')
@@ -1132,10 +1215,10 @@ func (e *Editor) handleRunCode() {
 		lang = "go"
 	}
 
-	// Запуск кода с параметрами из JSON
 	stdout, stderr, runErr := e.runCodeViaRuncode(code, lang, flags, args)
 	if runErr != nil {
-		errorQuery := "Analyze the error and suggest corrections for the code: Error: " + runErr.Error() + "\nStderr: " + stderr + "\nCode:\n" + code
+		errorQuery := "Analyze the error and suggest corrections for the code: Error: " + runErr.Error() +
+			"\nStderr: " + stderr + "\nCode:\n" + code
 		fixes, err2 := e.llmQueryWithoutInsert(errorQuery)
 		if err2 != nil {
 			e.statusMessage("Error obtaining corrections:" + err2.Error())
@@ -1143,11 +1226,10 @@ func (e *Editor) handleRunCode() {
 		}
 		e.insertLLMResponse("\n\n// Recommendations for correction:\n" + fixes)
 	} else {
-		e.insertLLMResponse("\n\n// Execution result:\n" + stdout)
+		e.insertLLMResponse("\n\n// No errors were detected in the code. \n// Execution result.\n" + stdout)
 	}
 }
 
-// Добавляем функцию для запроса без вставки
 func (e *Editor) llmQueryWithoutInsert(instruction string) (string, error) {
 	if strings.TrimSpace(e.llmProvider) == "" {
 		e.llmProvider = "ollama"
@@ -1155,44 +1237,137 @@ func (e *Editor) llmQueryWithoutInsert(instruction string) (string, error) {
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
 	}
-
-	cmd := exec.Command("tgpt", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, instruction)
-	out, err := cmd.Output()
+	out, err := SendMessageToLLM(instruction, e.llmProvider, e.llmModel)
 	if err != nil {
 		return "", err
 	}
 	return string(out), nil
 }
 
-// Добавляем функцию запуска кода
-func (e *Editor) runCodeViaRuncode(code string, lang string, flags string, args string) (string, string, error) {
-	binPath := "run"
-	cmdArgs := []string{}
+// This wrapper converts the args to a string and delegates to the internal runner.
+func (e *Editor) runCodeViaRuncode(code string, lang string, flags string, runArgs string) (string, string, error) {
+	args := strings.TrimSpace(runArgs)
+	return e.runCodeInternally(code, lang, flags, args)
+}
 
-	if flags != "" {
-		cmdArgs = append(cmdArgs, "--flag", flags)
-	}
-	if args != "" {
-		cmdArgs = append(cmdArgs, "--args", args)
-	}
-	if lang != "" {
-		cmdArgs = append(cmdArgs, "--lang", lang)
+func (e *Editor) runCodeInternally(code string, lang string, flags string, runArgs string) (string, string, error) {
+	l := strings.ToLower(strings.TrimSpace(lang))
+	if l == "" {
+		if strings.Contains(code, "package main") && strings.Contains(code, "func main") {
+			l = "go"
+		} else if strings.Contains(code, "#include <stdio.h>") {
+			l = "c"
+		} else {
+			l = "go"
+		}
 	}
 
-	cmd := exec.Command(binPath, cmdArgs...)
-	cmd.Stdin = strings.NewReader(code)
+	switch l {
+	case "cpp", "c++":
+		return runCppInternal(code, flags, runArgs)
+	case "c":
+		return runCInternal(code, flags, runArgs)
+	case "assembly", "asm":
+		return runAssemblyInternal(code, flags, runArgs)
+	case "fortran":
+		return runFortranInternal(code, flags, runArgs)
+	case "go":
+		return runGoInternal(code, flags, runArgs)
+	case "python", "py":
+		return runPythonInternal(code, flags, runArgs)
+	case "ruby", "rb":
+		return runRubyInternal(code, flags, runArgs)
+	case "kotlin", "kt":
+		return runKotlinInternal(code, flags, runArgs)
+	case "swift":
+		return runSwiftInternal(code, flags, runArgs)
+	case "html":
+		return "", "", openHTMLInBrowser(code)
+	case "lisp", "common lisp":
+		return runLispInternal(code, flags, runArgs)
+	default:
+		return "", "", fmt.Errorf("unsupported language: %s", lang)
+	}
+}
+func (e *Editor) showTerminalPrompt() {
+	e.terminalPrompt = &TerminalPrompt{
+		Value:    "",
+		Callback: e.executeTerminalCommand,
+	}
+}
 
-	var stdoutBuf, stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
+func (e *Editor) executeTerminalCommand(command string) {
+	if strings.TrimSpace(command) == "" {
+		return
+	}
+
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		return
+	}
+	cmdName := parts[0]
+	var args []string
+	if len(parts) > 1 {
+		args = parts[1:]
+	}
+
+	cmd := exec.Command(cmdName, args...)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	return stdoutBuf.String(), stderrBuf.String(), err
+
+	result := ""
+	if out.Len() > 0 {
+		result += out.String()
+	}
+	if stderr.Len() > 0 {
+		result += stderr.String()
+	}
+	if err != nil {
+		result += fmt.Sprintf("\nError: %v", err)
+	}
+
+	if result != "" {
+		e.insertLLMResponse(result)
+	}
+}
+
+func (e *Editor) handleTerminalInput(ev *tcell.EventKey) {
+	if e.terminalPrompt == nil {
+		return
+	}
+	switch ev.Key() {
+	case tcell.KeyEsc:
+		e.terminalPrompt = nil
+	case tcell.KeyEnter:
+		val := e.terminalPrompt.Value
+		cb := e.terminalPrompt.Callback
+		if cb != nil {
+			cb(val)
+		}
+	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if len(e.terminalPrompt.Value) > 0 {
+			runes := []rune(e.terminalPrompt.Value)
+			e.terminalPrompt.Value = string(runes[:len(runes)-1])
+		}
+	default:
+		r := ev.Rune()
+		if r != 0 {
+			e.terminalPrompt.Value += string(r)
+		}
+	}
 }
 
 // handleKey handles keyboard input.
 // handleKey обрабатывает ввод с клавиатуры.
 func (e *Editor) handleKey(ev *tcell.EventKey) {
+	if e.terminalPrompt != nil {
+		e.handleTerminalInput(ev)
+		return
+	}
 	if e.multiLinePrompt != nil {
 		e.handleMultiLinePromptInput(ev)
 		return
@@ -1204,6 +1379,8 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	shiftPressed := ev.Modifiers()&tcell.ModShift != 0
 
 	switch ev.Key() {
+	case tcell.KeyCtrlT:
+		e.showTerminalPrompt()
 	case tcell.KeyCtrlR:
 		e.handleRunCode()
 		e.ctrlAState = false
@@ -1231,9 +1408,10 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	case tcell.KeyCtrlA:
 		if !e.selecting {
 			e.selecting = true
+			// e.lineSelecting = true
 			e.selectStartX = 0
 			e.selectStartY = 0
-			e.startLineSelection()
+			// e.startLineSelection()
 			e.cy = len(e.lines) - 1
 			if e.cy < 0 {
 				e.cy = 0
@@ -1529,6 +1707,14 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlPState = false
 		e.ctrlLState = false
 	case tcell.KeyEnter:
+		if e.terminalPrompt != nil {
+			val := e.terminalPrompt.Value
+			cb := e.terminalPrompt.Callback
+			e.terminalPrompt = nil
+			if cb != nil {
+				cb(val)
+			}
+		}
 		if e.selecting {
 			e.deleteSelection()
 		}
@@ -1550,7 +1736,16 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlAState = false
 		e.ctrlPState = false
 		e.ctrlLState = false
+		e.terminalPrompt = nil
+
 	default:
+		if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
+			if len(e.terminalPrompt.Value) > 0 {
+				runes := []rune(e.terminalPrompt.Value)
+				e.terminalPrompt.Value = string(runes[:len(runes)-1])
+			}
+			return
+		}
 		r := ev.Rune()
 		if r != 0 && (ev.Modifiers()&tcell.ModAlt) == 0 {
 			if e.selecting {
@@ -2032,15 +2227,13 @@ func (e *Editor) llmQuery(instruction string) {
 		}
 	}
 
-	// Выполняем вызов LLM
-
-	cmd := exec.Command("tgpt", "-w", "-q", "--provider", e.llmProvider, "--model", e.llmModel, "--key", e.llmKey, payload)
-	out, err := cmd.Output()
-
+	out, err := SendMessageToLLM(instruction, e.llmProvider, e.llmModel)
 	if err != nil {
+
 		e.statusMessage("LLM error: " + err.Error())
 		return
 	}
+
 	resp := string(out)
 	if strings.TrimSpace(resp) == "" {
 		e.statusMessage("LLM returned an empty response")
@@ -2119,6 +2312,8 @@ func (e *Editor) newFile() {
 
 // main is the entry point of the program.
 // main является точкой входа в программу.
+// ... существующий код ...
+
 func main() {
 	provider := os.Getenv("LLM_PROVIDER")
 	model := os.Getenv("LLM_MODEL")
@@ -2131,13 +2326,46 @@ func main() {
 	flag.BoolVar(&showVersion, "v", false, "Show version (short)")
 	flag.Usage = printUsageExtended
 	flag.Parse()
+
+	args := flag.Args()
+	switch {
+	case len(args) >= 3:
+		provider = args[0]
+		model = args[1]
+		path = args[2]
+	case len(args) == 2:
+		provider = args[0]
+		model = args[1]
+
+		if strings.EqualFold(model, "help") {
+			switch strings.ToLower(provider) {
+			case "pollinations":
+				nameModelPollinations()
+				return
+			case "llm7":
+				nameModelLlm7()
+				return
+			default:
+
+				fmt.Println("Available models for known providers:")
+				nameModelPollinations()
+				nameModelLlm7()
+			}
+			return
+		}
+	case len(args) == 1:
+		path = args[0]
+	default:
+	}
+
 	if showVersion {
 		printVersion()
 		return
 	}
-	if path == "" && flag.NArg() > 0 {
+	if path == "" && flag.NArg() > 0 && len(args) == 0 {
 		path = flag.Arg(0)
 	}
+
 	editor := NewEditor(path, provider, model)
 	if editor == nil {
 		return
@@ -2145,6 +2373,374 @@ func main() {
 	if err := editor.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "Editor startup error:", err)
 	}
+}
+
+// New internal helpers: per-language implementations that compile/run locally
+// and capture stdout/stderr. These do not depend on the external "run" binary.
+
+func runCppInternal(code string, compileFlags string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.cpp")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+	exe := tmp.Name() + ".out"
+
+	compileArgs := []string{tmp.Name(), "-o", exe}
+	if strings.TrimSpace(compileFlags) != "" {
+		compileArgs = append(compileArgs, strings.Fields(compileFlags)...)
+	}
+	compile := exec.Command("g++", compileArgs...)
+	var cbuf bytes.Buffer
+	compile.Stdout = &cbuf
+	compile.Stderr = &cbuf
+	if err := compile.Run(); err != nil {
+		return "", cbuf.String(), fmt.Errorf("compile error: %w", err)
+	}
+
+	run := exec.Command(exe)
+	if strings.TrimSpace(runArgs) != "" {
+		run.Args = append([]string{exe}, splitArgs(runArgs)...)
+	} else {
+		run.Args = []string{exe}
+	}
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runCInternal(code string, compileFlags string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.c")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+
+	exe := tmp.Name() + ".out"
+
+	compileArgs := []string{tmp.Name(), "-o", exe}
+	if strings.TrimSpace(compileFlags) != "" {
+		compileArgs = append(compileArgs, strings.Fields(compileFlags)...)
+	}
+	compile := exec.Command("gcc", compileArgs...)
+	var cbuf bytes.Buffer
+	compile.Stdout = &cbuf
+	compile.Stderr = &cbuf
+	if err := compile.Run(); err != nil {
+		return "", cbuf.String(), fmt.Errorf("compile error: %w", err)
+	}
+
+	run := exec.Command(exe)
+	if strings.TrimSpace(runArgs) != "" {
+		run.Args = append([]string{exe}, splitArgs(runArgs)...)
+	} else {
+		run.Args = []string{exe}
+	}
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runAssemblyInternal(code string, compileFlags string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.asm")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+
+	obj := tmp.Name() + ".o"
+	exe := tmp.Name() + ".out"
+
+	var nasmFormat string
+	switch runtime.GOOS {
+	case "linux", "darwin":
+		nasmFormat = "elf64"
+	case "windows":
+		nasmFormat = "win64"
+	default:
+		nasmFormat = "elf64"
+	}
+
+	nasmArgs := []string{"-f", nasmFormat, tmp.Name(), "-o", obj}
+
+	if strings.TrimSpace(compileFlags) != "" {
+		nasmArgs = append(nasmArgs, splitArgs(compileFlags)...)
+	}
+
+	asm := exec.Command("nasm", nasmArgs...)
+	asmOut, err := asm.CombinedOutput()
+	if err != nil {
+		return "", string(asmOut), fmt.Errorf("nasm error: %w", err)
+	}
+	defer os.Remove(obj)
+	var ld *exec.Cmd
+	switch runtime.GOOS {
+	case "linux":
+		ld = exec.Command("ld", obj, "-o", exe)
+	case "darwin":
+		ld = exec.Command("cc", obj, "-o", exe)
+	case "windows":
+		ld = exec.Command("ld", obj, "-o", exe)
+	default:
+		ld = exec.Command("ld", obj, "-o", exe)
+	}
+
+	ldOut, err := ld.CombinedOutput()
+	if err != nil {
+		return "", string(ldOut), fmt.Errorf("link error: %w", err)
+	}
+	defer os.Remove(exe)
+	run := exec.Command(exe)
+
+	if strings.TrimSpace(runArgs) != "" {
+
+		run.Args = append(run.Args, splitArgs(runArgs)...)
+	}
+
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+
+	err = run.Run()
+
+	return stdout.String(), stderr.String(), err
+}
+
+func runFortranInternal(code string, compileFlags string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.f90")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+	exe := tmp.Name() + ".out"
+
+	args := []string{tmp.Name(), "-o", exe}
+	if compileFlags != "" {
+		args = append(args, strings.Fields(compileFlags)...)
+	}
+	compile := exec.Command("gfortran", args...)
+	compileOut, err := compile.CombinedOutput()
+	if err != nil {
+		return "", string(compileOut), fmt.Errorf("compile error: %w", err)
+	}
+	run := exec.Command(exe)
+	if strings.TrimSpace(runArgs) != "" {
+		run.Args = append([]string{exe}, splitArgs(runArgs)...)
+	} else {
+		run.Args = []string{exe}
+	}
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runGoInternal(code string, compileFlags string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.go")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+
+	args := []string{tmp.Name()}
+	if strings.TrimSpace(runArgs) != "" {
+		extra := splitArgs(runArgs)
+		if len(extra) > 0 {
+			args = append(args, extra...)
+		}
+	}
+	cmd := exec.Command("go", append([]string{"run"}, args...)...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runPythonInternal(code string, _ string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.py")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+	args := []string{tmp.Name()}
+	if strings.TrimSpace(runArgs) != "" {
+		args = append(args, splitArgs(runArgs)...)
+	}
+	cmd := exec.Command("python3", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runRubyInternal(code string, _ string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.rb")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+	args := []string{tmp.Name()}
+	if strings.TrimSpace(runArgs) != "" {
+		args = append(args, splitArgs(runArgs)...)
+	}
+	cmd := exec.Command("ruby", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runKotlinInternal(code string, _ string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.kt")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	jar := tmp.Name() + ".jar"
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+
+	compile := exec.Command("kotlinc", tmp.Name(), "-include-runtime", "-d", jar)
+	if out, err := compile.CombinedOutput(); err != nil {
+		return "", string(out), fmt.Errorf("kotlinc error: %w", err)
+	}
+	var run *exec.Cmd
+	args := []string{"-jar", jar}
+	if strings.TrimSpace(runArgs) != "" {
+		args = append(args, splitArgs(runArgs)...)
+	}
+	run = exec.Command("java", args...)
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runSwiftInternal(code string, _ string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.swift")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	exe := tmp.Name() + ".out"
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+	compile := exec.Command("swiftc", tmp.Name(), "-o", exe)
+	if out, err := compile.CombinedOutput(); err != nil {
+		return "", string(out), fmt.Errorf("swiftc error: %w", err)
+	}
+	defer os.Remove(exe)
+	run := exec.Command(exe)
+	if strings.TrimSpace(runArgs) != "" {
+		run.Args = append([]string{exe}, splitArgs(runArgs)...)
+	} else {
+		run.Args = []string{exe}
+	}
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func runLispInternal(code string, _ string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.lisp")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+	cmd := exec.Command("sbcl", "--script", tmp.Name())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if strings.TrimSpace(runArgs) != "" {
+		cmd.Args = append(cmd.Args, splitArgs(runArgs)...)
+	}
+	err = cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+func openHTMLInBrowser(content string) error {
+	tmp, err := ioutil.TempFile("", "runner_*.html")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return err
+	}
+	tmp.Close()
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open -a Safari ", tmp.Name())
+	case "windows":
+		cmd = exec.Command("start msedge ", tmp.Name())
+	default:
+		cmd = exec.Command("firefox ", tmp.Name())
+	}
+	return cmd.Start()
 }
 
 // getVisibleText gets the text that is currently visible on the screen.
@@ -3145,6 +3741,7 @@ func highlightHTML(line string) []HighlightedToken {
 
 // highlightLisp highlights Lisp code.
 // highlightLisp подсвечивает код Lisp.
+
 func highlightLisp(line string) []HighlightedToken {
 	var tokens []HighlightedToken
 	keywords := map[string]bool{
@@ -3220,4 +3817,353 @@ func highlightLisp(line string) []HighlightedToken {
 		tokens = append(tokens, HighlightedToken{Text: line[start:i], Style: styleDefault})
 	}
 	return tokens
+}
+
+func SendMessageToLLM(message, provider, model string) (string, error) {
+	parsePollinationsResponse := func(body []byte) (string, error) {
+		var m map[string]interface{}
+		if err := json.Unmarshal(body, &m); err != nil {
+			return "", fmt.Errorf("pollinations: некорректный json: %w", err)
+		}
+		if t, ok := m["text"].(string); ok && t != "" {
+			return t, nil
+		}
+		if c, ok := m["content"].(string); ok && c != "" {
+			return c, nil
+		}
+		if choices, ok := m["choices"].([]interface{}); ok && len(choices) > 0 {
+			if first, ok := choices[0].(map[string]interface{}); ok {
+				if t, ok := first["text"].(string); ok && t != "" {
+					return t, nil
+				}
+				if msg, ok := first["message"].(map[string]interface{}); ok {
+					if t, ok := msg["content"].(string); ok && t != "" {
+						return t, nil
+					}
+				}
+			}
+		}
+		if out, ok := m["output"].(string); ok && out != "" {
+			return out, nil
+		}
+		if data, ok := m["data"].(string); ok && data != "" {
+			return data, nil
+		}
+		return "", errors.New("pollinations: не удалось распознать текст ответа")
+	}
+
+	parseOllamaResponse := func(body []byte) (string, error) {
+		type ollamaChatMessage struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		type ollamaChoice struct {
+			Message ollamaChatMessage `json:"message"`
+		}
+		type ollamaResponse struct {
+			Choices []ollamaChoice `json:"choices"`
+		}
+		var r ollamaResponse
+		if err := json.Unmarshal(body, &r); err == nil {
+			if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
+				return r.Choices[0].Message.Content, nil
+			}
+		}
+		var f map[string]interface{}
+		if err := json.Unmarshal(body, &f); err == nil {
+			if t, ok := f["text"].(string); ok && t != "" {
+				return t, nil
+			}
+			if t, ok := f["data"].(string); ok && t != "" {
+				return t, nil
+			}
+		}
+		return "", errors.New("ollama: не удалось распознать текст ответа")
+	}
+
+	sendPollinations := func() (string, error) {
+		apiKey := os.Getenv("POLLINATIONS_API_KEY")
+		url := "https://text.pollinations.ai/openai"
+		type pollinationsMessage struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		type pollinationsRequestBody struct {
+			Model    string                `json:"model"`
+			Messages []pollinationsMessage `json:"messages"`
+			Seed     int                   `json:"seed"`
+		}
+
+		body := pollinationsRequestBody{
+			Model: "openai",
+			Messages: []pollinationsMessage{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "user", Content: message},
+			},
+			Seed: 42,
+		}
+
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			return "", fmt.Errorf("pollinations: не удалось сформировать тело запроса: %w", err)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("pollinations: создание запроса не удалось: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		client := &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("pollinations: сеть ошибка: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("pollinations: чтение ответа не удалось: %w", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("pollinations: статус %d: %s", resp.StatusCode, string(respBody))
+		}
+		parsed, err := parsePollinationsResponse(respBody)
+		if err != nil {
+			return "", fmt.Errorf("pollinations: разбор ответа не удался: %w", err)
+		}
+		return parsed, nil
+	}
+
+	sendLLM7 := func() (string, error) {
+		apiKey := os.Getenv("LLM7_API_KEY")
+		if apiKey == "" {
+			apiKey = "unused"
+		}
+
+		url := "https://api.llm7.io/v1/chat/completions"
+
+		reqBody := map[string]interface{}{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": message},
+			},
+			"temperature": 0.7,
+			"top_p":       1.0,
+		}
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return "", fmt.Errorf("llm7: не удалось сформировать тело запроса: %w", err)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("llm7: создание запроса не удалось: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		client := &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("llm7: сеть ошибка: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("llm7: чтение ответа не удалось: %w", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("llm7: статус %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		type llm7ChatMessage struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		type llm7Choice struct {
+			Message llm7ChatMessage `json:"message"`
+		}
+		type llm7Response struct {
+			Choices []llm7Choice `json:"choices"`
+		}
+		var r llm7Response
+		if err := json.Unmarshal(respBody, &r); err == nil {
+			if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
+				return r.Choices[0].Message.Content, nil
+			}
+		}
+		var f map[string]interface{}
+		if err := json.Unmarshal(respBody, &f); err == nil {
+			if t, ok := f["text"].(string); ok && t != "" {
+				return t, nil
+			}
+		}
+		return "", fmt.Errorf("llm7: не удалось распознать ответ")
+	}
+
+	sendOllama := func() (string, error) {
+		url := "http://localhost:11434/v1/chat/completions"
+
+		reqBody := map[string]interface{}{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": message},
+			},
+			"temperature": 0.7,
+			"top_p":       1.0,
+		}
+		bodyBytes, err := json.Marshal(reqBody)
+		if err != nil {
+			return "", fmt.Errorf("ollama: не удалось сформировать тело запроса: %w", err)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return "", fmt.Errorf("ollama: создание запроса не удалось: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		client := &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("ollama: сеть ошибка: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", fmt.Errorf("ollama: чтение ответа не удалось: %w", err)
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("ollama: статус %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		parsed, err := parseOllamaResponse(respBody)
+		if err != nil {
+			return "", fmt.Errorf("ollama: разбор ответа не удался: %w", err)
+		}
+		return parsed, nil
+	}
+
+	switch provider {
+	case "pollinations":
+		return sendPollinations()
+	case "llm7":
+		return sendLLM7()
+	case "ollama":
+		return sendOllama()
+	default:
+		return "", fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+func nameModelPollinations() {
+	resp, err := http.Get("https://text.pollinations.ai/models")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	var models []struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+
+	err = json.Unmarshal(body, &models)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("Модели Pollinations:\n")
+	for _, model := range models {
+		fmt.Printf(" %-40s  %s\n", model.Name, model.Description)
+	}
+}
+
+func nameModelLlm7() {
+	resp, err := http.Get("https://api.llm7.io/v1/models")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	type Mod struct {
+		ID         string `json:"id"`
+		Modalities struct {
+			Input []string `json:"input"`
+		} `json:"modalities"`
+	}
+
+	var models []Mod
+	if err := json.Unmarshal(body, &models); err == nil {
+		fmt.Printf("Модели Lmm7:\n")
+		for _, m := range models {
+			desc := "не указано"
+			if len(m.Modalities.Input) > 0 {
+				desc = strings.Join(m.Modalities.Input, ", ")
+			}
+			fmt.Printf(" %-40s %s\n", m.ID, desc)
+		}
+		return
+	}
+
+	var wrapper struct {
+		Models []Mod `json:"models"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err == nil {
+		fmt.Printf("Модели Lmm7:\n")
+		for _, m := range wrapper.Models {
+			desc := "не указано"
+			if len(m.Modalities.Input) > 0 {
+				desc = strings.Join(m.Modalities.Input, ", ")
+			}
+			fmt.Printf(" %-40s %s\n", m.ID, desc)
+		}
+		return
+	}
+
+	fmt.Println("Не удалось разобрать ответ")
 }
