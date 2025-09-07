@@ -5,79 +5,81 @@
 [![Go version](https://img.shields.io/badge/go-go1.24.6-brightgreen?style=flat-square&logo=go&logoColor=white)](
 https://golang.org/dl/)
 
-This is a terminal-based text editor written in Go, utilizing the `tcell/v2` library for terminal interaction. It supports basic editing functions, syntax highlighting for numerous programming languages, and integration with LLM (Large Language Models) via an external program called `tgpt`.
+# editor
+# Text editor
+
+It is a text editor for working in the terminal, written in the Go language, using the tcell/v2 library for working with the terminal. It supports basic editing functions, syntax highlighting for multiple programming languages, and integration with LLM (Large Language Models).
 
 ## Features
 
-*   **Text Editing:** Multiline editing, navigation with keys (arrow keys, Home, End, PgUp, PgDn), insertion, deletion, file creation, and opening.
-*   **Syntax Highlighting:** Supports syntax highlighting for the following languages: C, C++, Assembly, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp.
-*   **Search:** Text search within a file.
-*   **Navigation:** Jump to a specific line.
-*   **Undo/Redo:** Supports undo and redo operations.
-*   **Clipboard:** Cut, copy, and paste (uses system clipboard via `atotto/clipboard` library).
-*   **LLM Integration:** Allows sending instructions and text from the editor to the external `tgpt` program for interacting with LLMs. Buffer contents and visible text can be automatically included in requests.
-*   **Status Bar:** Displays filename, language, cursor position (line and column), and hotkey hints.
+* **Text editing:** Multi-line editing, keyboard navigation (arrows, Home, End, PgUp, PgDn), insert, delete, create and open files.
+* **Syntax highlighting:** Syntax highlighting support for the following languages: C, C++, Assembly, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp.
+*   **Search:** Search for text in a file.
+* **Navigation:** Jump to a specific line.
+* **Cancel/Repeat:** Support for Undo and Redo operations.
+* **Clipboard:** Cutting, copying, and pasting text (using the system clipboard via the atotto/clipboard library).
+* **Integration with LLM:** The ability to send instructions and text from the editor to interact with LLM. Data from the clipboard can be automatically added to the request.
+* **Status bar:** Displays the file name, language, row and column numbers, as well as keyboard shortcuts.
 
 ## Installation
 
-1.  Ensure you have Go installed (https://golang.org/dl/).
-2.  Install necessary dependencies:
-    ```bash
-    go mod init <module_name> # If creating a new module
+1. Make sure you have Go installed (https://golang.org/dl /).
+2. Install the necessary dependencies:
+``bash
+    go mod init <module name> # If you are creating a new module
     go get github.com/atotto/clipboard
     go get github.com/gdamore/tcell/v2
     go get github.com/mattn/go-runewidth
-    ```
-    (Or simply run `go mod tidy` if `go.mod` already exists).
-3.  Compile the program:
+    ``
+(Or just use `go mod tidy` if `go.mod` already exists).
+3. Compile the program:
     ```bash
-    go build -o editor main.go # Replace main.go with the path to your code file if different
+    go build -o editor main.go # Replace main.go to the path to the code file if it is different.
     ```
-4.  To enable LLM functionality, install and configure the external `tgpt` program (or modify the code to use a different program as described in the comments).
-
+    
 ## Usage
 
 Run the compiled file:
 
-```bash
-./editor  [flags] [file_path]
-```
-
+``bash
+./editor [provider] [model] [file]
+``
+provider {default: ollama}, model {default: gemma3:4b}
 ### Flags
 
-*   `-provider string`: LLM provider (defaults to value from environment variable `LLM_PROVIDER`).
-*   `-model string`: LLM model (defaults to value from environment variable `LLM_MODEL`).
-*   `-path string`: Path to open a specific file.
-*   `-v, -version`: Show editor version.
-*   `-h, --help`: Show extended help.
+* `string': LLM provider (by default, it is taken from the environment variable `LLM_PROVIDER`).
+*   `string`: The LLM model (by default, it is taken from the environment variable `LLM_MODEL`).
+* `string': The path to the file to open.
+* `-v, -version': Show the editor version.
+* `-h, --help`: Show extended help.
 
-If no file path is specified in the flags, it can be passed as the first positional argument.
+If the file path is not specified in the flags, it can be passed as the first command line argument.
 
-### Hotkeys
+### Keyboard shortcuts
 
-- Arrow keys: move cursor
+- Arrows: move the cursor
 - Home/End, PgUp/PgDn: text navigation
-- Ctrl-A: select all (and other selection options)
-- Ctrl-F: search text
-- Ctrl-G: go to line
-- Ctrl-S: save file
-- Ctrl-O: open file
+- Ctrl-A: highlight everything (and other selection options)
+- Ctrl-F: text search
+- Ctrl-G: go to the line
+- Ctrl-S: save the file
+- Ctrl-O: open the file
 - Ctrl-N: new file
-- Ctrl-Q: quit
-- Ctrl-X: cut current line
+- Ctrl-Q: exit
+- Ctrl-X: cut the current line
 - Ctrl-C: copy to clipboard
 - Ctrl-V: paste from clipboard
-- Ctrl-P: generate text/code based on description
-- Ctrl-L: send request to LLM (and insert response)
-- Ctrl-B Select line-by-line (from cursor)
-- Ctrl-P Generates program code based on description
-- Ctrl-R Runs the program code
-
+- Ctrl-P: generate text/code based on the description
+- Ctrl-L: send a request to LLM (and insert a response)
+- Ctrl-B Select line by line (from the cursor)
+- Ctrl-P Generates the program code based on the description
+- Ctrl-R Launches the program code
+- Ctrl-T OS Terminal
 
 
 ## Version
 
-Current version: 1.3.0
+Current version: 1.6.2
 
 ## Dependencies
 
@@ -87,26 +89,24 @@ Current version: 1.3.0
 
 ## License
 
-This project is licensed under the BSD 3-Clause License — see details in the [LICENSE](LICENSE) file.
+This project is licensed under the BSD 3-Clause license - for details, see the [LICENSE](LICENSE) file.
 
 ## Notes
 
-*   The code contains comments in Russian.
-*   It uses the external command `tgpt` for LLM interaction (install via `brew install tgpt`, https://github.com/aandrew-me/tgpt). If unavailable, you can try replacing it with another.
-*   The editor has a fixed window size (115x34), defined in the code (`contentWidth`, `contentHeight`).
-*   The program has been tested on macOS 15.6.
+* The code contains comments in Russian.
+* The editor has a fixed window size (115x34), defined in the code (`contentWidth`, `contentHeight`).
+* The program code was checked on macOS 15 OS.6 
 
-## Contact Information
+## Contact information
 
-For questions or suggestions, contact: [skala.skalolaz.1970@gmail.com]
+If you have any questions or suggestions, please contact: [skala.skalolaz.1970@gmail.com ]
 
-See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
-
+See [CREDITS.md ](CREDITS.md ) — acknowledgements and information about addictions.
 
 # editor
 # Текстовый редактор
 
-Это текстовый редактор для работы в терминале, написанный на языке Go, с использованием библиотеки `tcell/v2` для работы с терминалом. Он поддерживает основные функции редактирования, синтаксическую подсветку для множества языков программирования и интеграцию с LLM (Large Language Models) через внешнюю программу `tgpt`.
+Это текстовый редактор для работы в терминале, написанный на языке Go, с использованием библиотеки `tcell/v2` для работы с терминалом. Он поддерживает основные функции редактирования, синтаксическую подсветку для множества языков программирования и интеграцию с LLM (Large Language Models).
 
 ## Возможности
 
@@ -116,7 +116,7 @@ See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
 *   **Навигация:** Переход к определенной строке.
 *   **Отмена/повтор:** Поддержка операций отмены (`Undo`) и повтора (`Redo`) действий.
 *   **Буфер обмена:** Вырезание, копирование и вставка текста (используется системный буфер обмена через библиотеку `atotto/clipboard`).
-*   **Интеграция с LLM:** Возможность отправки инструкций и текста из редактора во внешнюю программу `tgpt` для взаимодействия с LLM. Данные из буфера обмена и видимая часть текста могут автоматически добавляться к запросу.
+*   **Интеграция с LLM:** Возможность отправки инструкций и текста из редактора для взаимодействия с LLM. Данные из буфера обмена могут автоматически добавляться к запросу.
 *   **Статусная строка:** Отображение имени файла, языка, номера строки и столбца, а также подсказок по горячим клавишам.
 
 ## Установка
@@ -134,21 +134,20 @@ See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
     ```bash
     go build -o editor main.go # Замените main.go на путь к файлу с кодом, если он другой
     ```
-4.  Для работы с LLM необходимо установить и настроить внешнюю программу `tgpt` (или изменить код для использования другой программы, как указано в комментариях).
-
+    
 ## Использование
 
 Запустите скомпилированный файл:
 
 ```bash
-./editor  [флаги] [путь_к_файлу]
+./editor  [провайдер] [модель] [файл]
 ```
-
+провайдер {default: ollama}, модель {default: gemma3:4b}
 ### Флаги
 
-*   `-provider string`: Провайдер LLM (по умолчанию берется из переменной окружения `LLM_PROVIDER`).
-*   `-model string`: Модель LLM (по умолчанию берется из переменной окружения `LLM_MODEL`).
-*   `-path string`: Путь к файлу для открытия.
+*   `string`: Провайдер LLM (по умолчанию берется из переменной окружения `LLM_PROVIDER`).
+*   `string`: Модель LLM (по умолчанию берется из переменной окружения `LLM_MODEL`).
+*   `string`: Путь к файлу для открытия.
 *   `-v, -version`: Показать версию редактора.
 *   `-h, --help`: Показать расширенную справку.
 
@@ -173,11 +172,12 @@ See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
 - Ctrl-B  Выделить по строчно (от курсора)
 - Ctrl-P  Генерирует код программы на основе описания
 - Ctrl-R  Запускает код программы
+- Ctrl-T  Терминал ОС
 
 
 ## Версия
 
-Текущая версия: 1.3.0
+Текущая версия: 1.6.2
 
 ## Зависимости
 
@@ -192,7 +192,6 @@ See [CREDITS.md](CREDITS.md) — acknowledgements and dependency information.
 ## Примечания
 
 *   Код содержит комментарии на русском языке.
-*   Для работы с LLM используется внешняя команда `tgpt` (brew install tgpt) https://github.com/aandrew-me/tgpt. Если она недоступна, можно попробовать заменить её на иную.
 *   Редактор имеет фиксированный размер окна (115x34), определяемый в коде (`contentWidth`, `contentHeight`).
 *   Проверка кода программы была произведена на ОС macOS 15.6 
 
