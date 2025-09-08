@@ -28,7 +28,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.2"
+const Version = "1.6.4"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -143,36 +143,38 @@ type MultiLinePrompt struct {
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
-	screen             tcell.Screen
-	filename           string
-	lines              []string
-	cx, cy             int
-	offsetX            int
-	offsetY            int
-	dirty              bool
-	clipboard          string
-	undoStack          [][]string
-	redoStack          [][]string
-	prompt             *Prompt
-	multiLinePrompt    *MultiLinePrompt
-	quit               bool
-	width, height      int
-	llmProvider        string
-	llmModel           string
-	llmKey             string
-	canvasWidth        int
-	contentWidth       int
-	contentHeight      int
-	language           Language
-	selectAllBeforeLLM bool
-	ctrlAState         bool
-	ctrlLState         bool
-	ctrlPState         bool
-	selectStartX       int
-	selectStartY       int
-	selecting          bool
-	lineSelecting      bool
-	terminalPrompt     *TerminalPrompt
+	screen                  tcell.Screen
+	filename                string
+	lines                   []string
+	cx, cy                  int
+	offsetX                 int
+	offsetY                 int
+	dirty                   bool
+	clipboard               string
+	undoStack               [][]string
+	redoStack               [][]string
+	prompt                  *Prompt
+	multiLinePrompt         *MultiLinePrompt
+	quit                    bool
+	width, height           int
+	llmProvider             string
+	llmModel                string
+	llmKey                  string
+	canvasWidth             int
+	contentWidth            int
+	contentHeight           int
+	language                Language
+	selectAllBeforeLLM      bool
+	ctrlAState              bool
+	ctrlLState              bool
+	ctrlPState              bool
+	selectStartX            int
+	selectStartY            int
+	selecting               bool
+	lineSelecting           bool
+	terminalPrompt          *TerminalPrompt
+	includeCtrlAContext     bool
+	includeClipboardContext bool
 }
 
 type TerminalPrompt struct {
@@ -775,8 +777,8 @@ func (e *Editor) render() {
 		}
 		wrappedLines := wrapText(promptText, wrapWidth)
 		numLinesToShow := len(wrappedLines)
-		if numLinesToShow > 4 {
-			numLinesToShow = 4
+		if numLinesToShow > 20 {
+			numLinesToShow = 20
 		}
 		startScreenRow := e.contentHeight - 2 - numLinesToShow
 		if startScreenRow < 1 {
@@ -1536,34 +1538,27 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlLState = false
 		e.endSelection()
 	case tcell.KeyCtrlC:
-		if e.ctrlAState {
-			allText := strings.Join(e.lines, "\n")
-			if err := clipboard.WriteAll(allText); err != nil {
-				e.statusMessage("Copy error: " + err.Error())
-			} else {
-				e.statusMessage("Everything has been copied: " + strconv.Itoa(len(e.lines)) + " lines")
-			}
-			e.ctrlAState = false
-			e.ctrlPState = false
-			e.ctrlLState = false
-		} else {
-			if e.selecting {
-				selectedText := e.getSelectedText()
-				if selectedText != "" {
-					if err := clipboard.WriteAll(selectedText); err != nil {
-						e.statusMessage("Copy error: " + err.Error())
-					} else {
-						e.statusMessage("Copy: " + strconv.Itoa(strings.Count(selectedText, "\n")+1) + " lines")
-					}
+		// Исправление: копирование выделенного текста в буфер редактора и системный буфер
+		// чтобы контекст для LLM (через includeClipboardContext) мог быть передан.
+		if e.selecting {
+			selectedText := e.getSelectedText()
+			if selectedText != "" {
+				e.clipboard = selectedText
+				if err := clipboard.WriteAll(selectedText); err != nil {
+					e.statusMessage("Copy error clipboard: " + err.Error())
+				} else {
+					e.statusMessage("Copied " + strconv.Itoa(strings.Count(selectedText, "\n")+1) + " line(s) to clipboard")
 				}
-			} else {
-				if e.cy < len(e.lines) && e.cy >= 0 {
-					line := e.lines[e.cy]
-					if err := clipboard.WriteAll(line); err != nil {
-						e.statusMessage("Copy error: " + err.Error())
-					} else {
-						e.statusMessage("Copy: " + line)
-					}
+			}
+		} else {
+			// Если ничего не выделено, можно копировать текущую строку (опционально)
+			curLine := e.lines[e.cy]
+			if curLine != "" {
+				e.clipboard = curLine
+				if err := clipboard.WriteAll(curLine); err != nil {
+					e.statusMessage("Copy error clipboard: " + err.Error())
+				} else {
+					e.statusMessage("Copied current line to clipboard")
 				}
 			}
 		}
@@ -2227,9 +2222,8 @@ func (e *Editor) llmQuery(instruction string) {
 		}
 	}
 
-	out, err := SendMessageToLLM(instruction, e.llmProvider, e.llmModel)
+	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel)
 	if err != nil {
-
 		e.statusMessage("LLM error: " + err.Error())
 		return
 	}
@@ -2312,8 +2306,6 @@ func (e *Editor) newFile() {
 
 // main is the entry point of the program.
 // main является точкой входа в программу.
-// ... существующий код ...
-
 func main() {
 	provider := os.Getenv("LLM_PROVIDER")
 	model := os.Getenv("LLM_MODEL")
@@ -2377,7 +2369,6 @@ func main() {
 
 // New internal helpers: per-language implementations that compile/run locally
 // and capture stdout/stderr. These do not depend on the external "run" binary.
-
 func runCppInternal(code string, compileFlags string, runArgs string) (string, string, error) {
 	tmp, err := ioutil.TempFile("", "runner_*.cpp")
 	if err != nil {
