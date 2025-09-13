@@ -28,7 +28,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.4"
+const Version = "1.6.6"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -143,38 +143,40 @@ type MultiLinePrompt struct {
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
-	screen                  tcell.Screen
-	filename                string
-	lines                   []string
-	cx, cy                  int
-	offsetX                 int
-	offsetY                 int
-	dirty                   bool
-	clipboard               string
-	undoStack               [][]string
-	redoStack               [][]string
-	prompt                  *Prompt
-	multiLinePrompt         *MultiLinePrompt
-	quit                    bool
-	width, height           int
-	llmProvider             string
-	llmModel                string
-	llmKey                  string
-	canvasWidth             int
-	contentWidth            int
-	contentHeight           int
-	language                Language
-	selectAllBeforeLLM      bool
-	ctrlAState              bool
-	ctrlLState              bool
-	ctrlPState              bool
-	selectStartX            int
-	selectStartY            int
-	selecting               bool
-	lineSelecting           bool
-	terminalPrompt          *TerminalPrompt
-	includeCtrlAContext     bool
-	includeClipboardContext bool
+	screen             tcell.Screen
+	filename           string
+	lines              []string
+	cx, cy             int
+	offsetX            int
+	offsetY            int
+	dirty              bool
+	clipboard          string
+	undoStack          [][]string
+	redoStack          [][]string
+	prompt             *Prompt
+	multiLinePrompt    *MultiLinePrompt
+	quit               bool
+	width, height      int
+	llmProvider        string
+	llmModel           string
+	llmKey             string
+	canvasWidth        int
+	contentWidth       int
+	contentHeight      int
+	language           Language
+	selectAllBeforeLLM bool
+	ctrlAState         bool
+	ctrlLState         bool
+	ctrlPState         bool
+	selectStartX       int
+	selectStartY       int
+	selecting          bool
+	lineSelecting      bool
+	terminalPrompt     *TerminalPrompt
+	// includeCtrlAContext     bool
+	// includeClipboardContext bool
+	// encoding                string
+	llmLastPrompt string
 }
 
 type TerminalPrompt struct {
@@ -200,6 +202,7 @@ func NewEditor(path string, provider string, model string) *Editor {
 	e.llmProvider = provider
 	e.llmModel = model
 	e.canvasWidth = 0
+	e.llmLastPrompt = ""
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err == nil {
@@ -402,6 +405,15 @@ func (e *Editor) buildDisplayBuffer() []DisplayRow {
 		}
 	}
 	return buf
+}
+
+func (e *Editor) llmPromptWithPrevShow() {
+	e.multiLinePrompt = &MultiLinePrompt{
+		Label:    "To send the prompt, click Ctrl-L",
+		Value:    e.llmLastPrompt,
+		Callback: func(input string) { e.llmQuery(input) },
+	}
+	e.prompt = nil
 }
 
 // cursorDisplayPosition calculates the display position of the cursor.
@@ -1465,9 +1477,7 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlPState = false
 		e.ctrlLState = false
 	case tcell.KeyCtrlL:
-		e.multiLinePromptShow("(To send the prompt, click Ctrl-L)  ", func(input string) {
-			e.llmQuery(input)
-		})
+		e.llmPromptWithPrevShow()
 		e.ctrlLState = true
 	case tcell.KeyCtrlG:
 		e.promptShow("Go to line", func(input string) {
@@ -2194,6 +2204,7 @@ func (e *Editor) sendCommentToLLM() {
 // llmQuery sends a query to the LLM.
 // llmQuery отправляет запрос LLM.
 func (e *Editor) llmQuery(instruction string) {
+	e.llmLastPrompt = instruction
 	defer func() {
 		e.selectAllBeforeLLM = false
 		e.ctrlPState = false
@@ -3886,7 +3897,7 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 		}
 
 		body := pollinationsRequestBody{
-			Model: "openai",
+			Model: model,
 			Messages: []pollinationsMessage{
 				{Role: "system", Content: "You are a helpful assistant."},
 				{Role: "user", Content: message},
@@ -3937,23 +3948,36 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 		return parsed, nil
 	}
 
+	// url := "https://api.llm7.io/v1/chat/completions"
 	sendLLM7 := func() (string, error) {
+		baseURL := os.Getenv("LLM7_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://api.llm7.io/v1"
+		}
 		apiKey := os.Getenv("LLM7_API_KEY")
-		if apiKey == "" {
-			apiKey = "unused"
+		url := baseURL + "/chat/completions"
+
+		type llm7Message struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		}
+		type llm7Request struct {
+			Model       string        `json:"model"`
+			Messages    []llm7Message `json:"messages"`
+			Temperature float64       `json:"temperature"`
+			TopP        float64       `json:"top_p"`
 		}
 
-		url := "https://api.llm7.io/v1/chat/completions"
-
-		reqBody := map[string]interface{}{
-			"model": model,
-			"messages": []map[string]string{
-				{"role": "user", "content": message},
+		body := llm7Request{
+			Model: model,
+			Messages: []llm7Message{
+				{Role: "user", Content: message},
 			},
-			"temperature": 0.7,
-			"top_p":       1.0,
+			Temperature: 0.2,
+			TopP:        1.0,
 		}
-		bodyBytes, err := json.Marshal(reqBody)
+
+		bodyBytes, err := json.Marshal(body)
 		if err != nil {
 			return "", fmt.Errorf("llm7: не удалось сформировать тело запроса: %w", err)
 		}
@@ -3963,7 +3987,9 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 			return "", fmt.Errorf("llm7: создание запроса не удалось: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -3988,15 +4014,14 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 			return "", fmt.Errorf("llm7: статус %d: %s", resp.StatusCode, string(respBody))
 		}
 
-		type llm7ChatMessage struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		type llm7Choice struct {
-			Message llm7ChatMessage `json:"message"`
-		}
+		// Попытка распарсить ожидаемую структуру:
 		type llm7Response struct {
-			Choices []llm7Choice `json:"choices"`
+			Choices []struct {
+				Message struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
 		}
 		var r llm7Response
 		if err := json.Unmarshal(respBody, &r); err == nil {
@@ -4004,13 +4029,30 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 				return r.Choices[0].Message.Content, nil
 			}
 		}
+		// Фолбэк к более свободной структуре
 		var f map[string]interface{}
 		if err := json.Unmarshal(respBody, &f); err == nil {
+			if choices, ok := f["choices"].([]interface{}); ok && len(choices) > 0 {
+				if first, ok := choices[0].(map[string]interface{}); ok {
+					if msg, ok := first["message"].(map[string]interface{}); ok {
+						if t, ok := msg["content"].(string); ok && t != "" {
+							return t, nil
+						}
+					}
+					if t, ok := first["text"].(string); ok && t != "" {
+						return t, nil
+					}
+				}
+			}
 			if t, ok := f["text"].(string); ok && t != "" {
 				return t, nil
 			}
+			if t, ok := f["data"].(string); ok && t != "" {
+				return t, nil
+			}
 		}
-		return "", fmt.Errorf("llm7: не удалось распознать ответ")
+
+		return "", errors.New("llm7: не удалось распознать текст ответа")
 	}
 
 	sendOllama := func() (string, error) {
@@ -4021,7 +4063,7 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 			"messages": []map[string]string{
 				{"role": "user", "content": message},
 			},
-			"temperature": 0.7,
+			"temperature": 0.2,
 			"top_p":       1.0,
 		}
 		bodyBytes, err := json.Marshal(reqBody)
