@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -28,7 +29,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.6"
+const Version = "1.6.7"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -65,17 +66,60 @@ var (
 	stylePreproc  = tcell.StyleDefault.Foreground(tcell.ColorPurple).Background(tcell.ColorBlack)
 )
 
+var llmURLKey *string
+
 // printVersion prints the editor version.
 // printVersion выводит версию редактора.
 func printVersion() {
 	fmt.Println("Editor version", Version)
 }
 
+// detectSystemLanguage возвращает код языка системы: "ru", "en" или "de"
+func detectSystemLanguage() string {
+	// ищем наиболее надёжно в стандартных переменных окружения
+	var candidates = []string{
+		os.Getenv("LANG"),
+		os.Getenv("LC_ALL"),
+		os.Getenv("LC_MESSAGES"),
+		os.Getenv("LANGUAGE"),
+	}
+	for _, v := range candidates {
+		if v == "" {
+			continue
+		}
+		lv := strings.ToLower(v)
+		// убираем возможные суффиксы типа ".UTF-8", "@locale" и т.д.
+		if dot := strings.IndexByte(lv, '.'); dot != -1 {
+			lv = lv[:dot]
+		}
+		// приоритет ru, затем de, затем en
+		if strings.Contains(lv, "ru") {
+			return "ru"
+		}
+		if strings.Contains(lv, "en") {
+			return "en"
+		}
+	}
+	// По умолчанию английский
+	return "en"
+}
+
+// printUsageExtended prints the extended help information based on OS language
+func printUsageExtended() {
+	lang := detectSystemLanguage()
+	switch lang {
+	case "ru":
+		printUsageRU()
+	default:
+		printUsageEN()
+	}
+}
+
 // printUsageExtended prints the extended help information.
 // printUsageExtended выводит расширенную справку.
-func printUsageExtended() {
+func printUsageRU() {
 	fmt.Println("Editor - расширенная справка")
-	fmt.Println("Usage: editor  [provider] [model] [path]")
+	fmt.Println("Usage: editor  [provider] [model] [path] [--key {sn-...}]")
 	fmt.Println()
 	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
 	fmt.Println("Flags:")
@@ -112,6 +156,53 @@ func printUsageExtended() {
 	fmt.Println()
 	fmt.Println("Примеры:")
 	fmt.Println("  editor pollinations openai /path/to/file.txt")
+	fmt.Println("  editor llm7 help")
+	fmt.Println("  editor pollinations help")
+	fmt.Println("  editor https://openrouter.ai/api/v1/chat/completions qwen/qwen3-coder:free file.txt --key sn-...")
+	fmt.Println("  editor file.txt")
+}
+
+func printUsageEN() {
+	fmt.Println("Editor - extended help")
+	fmt.Println("Usage: editor  [provider] [model] [path] [--key {sn-...}]")
+	fmt.Println()
+	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
+	fmt.Println("Flags:")
+	fmt.Println("  -h, --help         Show this help and usage.")
+	fmt.Println("  -v, --version      Show program version.")
+	fmt.Println()
+	fmt.Println("Features:")
+	fmt.Println("  - Text editor with support for multiline editing, cursor navigation,")
+	fmt.Println("    undo/redo, cut/copy/paste, find, go to line,")
+	fmt.Println("    and optional integration with LLM.")
+	fmt.Println("  - LLM integration: invoked during provider/model setup.")
+	fmt.Println()
+	fmt.Println("Hotkeys:")
+	fmt.Println("  Ctrl-L  Send the prompt to LLM")
+	fmt.Println("  Ctrl-P  Generates code from a description (as a comment)")
+	fmt.Println("  Ctrl-R  Run code, and on error - recommendations to fix")
+	fmt.Println("  Ctrl-S  Save file")
+	fmt.Println("  Ctrl-O  Open file")
+	fmt.Println("  Ctrl-N  New file")
+	fmt.Println("  Ctrl-Q  Quit editor")
+	fmt.Println("  Ctrl-F  Find text")
+	fmt.Println("  Ctrl-G  Go to line")
+	fmt.Println("  Ctrl-Z  Undo")
+	fmt.Println("  Ctrl-E  Redo")
+	fmt.Println("  Ctrl-X  Remove current line")
+	fmt.Println("  Ctrl-A  Select all")
+	fmt.Println("  Ctrl-B  Select by line (from cursor)")
+	fmt.Println("  Ctrl-C  Copy to clipboard")
+	fmt.Println("  Ctrl-V  Paste clipboard")
+	fmt.Println("  Ctrl-T  OS terminal (print LLM answer on canvas)")
+	fmt.Println("Navigation:")
+	fmt.Println("  Arrows: cursor movement, Home/End, PgUp/PgDn — navigation in text")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  editor pollinations openai /path/to/file.txt")
+	fmt.Println("  editor llm7 help")
+	fmt.Println("  editor pollinations help")
+	fmt.Println("  editor https://openrouter.ai/api/v1/chat/completions qwen/qwen3-coder:free file.txt --key sn-...")
 	fmt.Println("  editor file.txt")
 }
 
@@ -2216,9 +2307,13 @@ func (e *Editor) llmQuery(instruction string) {
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
 	}
-	if strings.TrimSpace(e.llmKey) == "" {
-		e.llmKey = ""
+	if *llmURLKey != "" {
+		e.llmKey = *llmURLKey
 	}
+	// if strings.TrimSpace(e.llmKey) == "" {
+	// 	e.llmKey = ""
+	// }
+
 	payload := instruction
 	if cb, err := clipboard.ReadAll(); err == nil {
 		cb = strings.TrimSpace(cb)
@@ -2324,6 +2419,8 @@ func main() {
 	flag.StringVar(&path, "path", "", "path to file")
 	flag.StringVar(&provider, "provider", provider, "LLMS provider")
 	flag.StringVar(&model, "model", model, "LLMS model")
+	llmURLKey = flag.String("key", "", "Используйте личный API-ключ.")
+	// flag.StringVar(&llmURLKey, "key", "", "LLM API key для URL-based провайдеров")
 	var showVersion bool
 	flag.BoolVar(&showVersion, "version", false, "Show version")
 	flag.BoolVar(&showVersion, "v", false, "Show version (short)")
@@ -2373,6 +2470,7 @@ func main() {
 	if editor == nil {
 		return
 	}
+
 	if err := editor.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "Editor startup error:", err)
 	}
@@ -3821,7 +3919,128 @@ func highlightLisp(line string) []HighlightedToken {
 	return tokens
 }
 
+func isURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+func extractContentFromLLMResponse(body []byte) (string, error) {
+	type aiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Content string `json:"content"`
+			Text    string `json:"text"`
+		} `json:"choices"`
+		Text string `json:"text"`
+	}
+	var r aiResp
+	if err := json.Unmarshal(body, &r); err == nil {
+		if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
+			return r.Choices[0].Message.Content, nil
+		}
+		if r.Choices[0].Content != "" {
+			return r.Choices[0].Content, nil
+		}
+		if r.Choices[0].Text != "" {
+			return r.Choices[0].Text, nil
+		}
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(body, &m); err == nil {
+		if t, ok := m["text"].(string); ok && t != "" {
+			return t, nil
+		}
+		if out, ok := m["output"].(string); ok && out != "" {
+			return out, nil
+		}
+		if data, ok := m["data"].(string); ok && data != "" {
+			return data, nil
+		}
+		if c, ok := m["choices"].([]interface{}); ok && len(c) > 0 {
+			if first, ok := c[0].(map[string]interface{}); ok {
+				if msg, ok := first["message"].(map[string]interface{}); ok {
+					if content, ok := msg["content"].(string); ok && content != "" {
+						return content, nil
+					}
+				}
+				if text, ok := first["text"].(string); ok && text != "" {
+					return text, nil
+				}
+			}
+		}
+	}
+	return "", errors.New("unable to extract content from LLM response")
+}
+
+func sendMessageToLLMUsingURL(endpoint, model, message string) (string, error) {
+	payload := map[string]interface{}{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": message},
+		},
+		"temperature": 0.2,
+		"top_p":       1.0,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	var apiKey string
+	if *llmURLKey != "" {
+		apiKey = *llmURLKey
+	} else if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		apiKey = v
+	} else if v := os.Getenv("AI_API_KEY"); v != "" {
+		apiKey = v
+	} else if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
+		apiKey = v
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	// Таймаут и контекст
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("LLM URL request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("LLM URL returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+	content, err := extractContentFromLLMResponse(respBody)
+	if err != nil {
+		return "", err
+	}
+	return content, nil
+}
+
 func SendMessageToLLM(message, provider, model string) (string, error) {
+	if isURL(provider) {
+		return sendMessageToLLMUsingURL(provider, model, message)
+	}
 	parsePollinationsResponse := func(body []byte) (string, error) {
 		var m map[string]interface{}
 		if err := json.Unmarshal(body, &m); err != nil {
