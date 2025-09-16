@@ -94,7 +94,7 @@ This project is licensed under the BSD 3-Clause license - for details, see the [
 
 * The code contains comments in Russian.
 * The editor has a fixed window size (115x34), defined in the code (`contentWidth`, `contentHeight`).
-* The program code was checked on macOS 15 OS.6 
+* The program code was checked on macOS 15.6 
 
 ## Contact information
 
