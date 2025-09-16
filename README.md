@@ -78,7 +78,7 @@ If the file path is not specified in the flags, it can be passed as the first co
 
 ## Version
 
-Current version: 1.6.7
+Current version: 1.6.8
 
 ## Dependencies
 
@@ -177,7 +177,7 @@ See [CREDITS.md ](CREDITS.md ) — acknowledgements and information about addict
 
 ## Версия
 
-Текущая версия: 1.6.7
+Текущая версия: 1.6.8
 
 ## Зависимости
 
