@@ -29,7 +29,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.7"
+const Version = "1.6.8"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -268,6 +268,8 @@ type Editor struct {
 	// includeClipboardContext bool
 	// encoding                string
 	llmLastPrompt string
+	errorMessage  string
+	errorShowTime time.Time
 }
 
 type TerminalPrompt struct {
@@ -647,6 +649,23 @@ func wrapText(text string, width int) []string {
 	return lines
 }
 
+// showError displays an error message in the status bar with red background.
+// showError отображает сообщение об ошибке в строке состояния с красным фоном.
+func (e *Editor) showError(msg string) {
+	e.errorMessage = msg
+	e.errorShowTime = time.Now()
+	e.render() // Принудительно перерисовываем
+
+	// Auto-hide after 3 seconds
+	go func() {
+		time.Sleep(5 * time.Second)
+		if time.Since(e.errorShowTime) >= 5*time.Second {
+			e.errorMessage = ""
+			e.render()
+		}
+	}()
+}
+
 // render renders the editor to the screen.
 // render отображает редактор на экране.
 func (e *Editor) render() {
@@ -991,6 +1010,31 @@ func (e *Editor) render() {
 			e.screen.SetContent(i, e.contentHeight-2, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 		}
 	}
+	if e.errorMessage != "" && time.Since(e.errorShowTime) < 3*time.Second {
+		for i := 0; i < e.contentWidth; i++ {
+			e.screen.SetContent(i, e.contentHeight-1, ' ', nil,
+				tcell.StyleDefault.Background(tcell.ColorRed).Foreground(tcell.ColorWhite))
+		}
+
+		runes := []rune(" " + e.errorMessage)
+		xPos := 0
+		for i := 0; i < len(runes) && xPos < e.contentWidth; i++ {
+			r := runes[i]
+			rw := runewidth.RuneWidth(r)
+			if xPos+rw > e.contentWidth {
+				break
+			}
+			for cellOffset := 0; cellOffset < rw; cellOffset++ {
+				drawRune := r
+				if cellOffset > 0 {
+					drawRune = ' '
+				}
+				e.screen.SetContent(xPos+cellOffset, e.contentHeight-1, drawRune, nil,
+					tcell.StyleDefault.Background(tcell.ColorRed).Foreground(tcell.ColorWhite))
+			}
+			xPos += rw
+		}
+	}
 	e.screen.Show()
 }
 
@@ -1182,15 +1226,7 @@ func (e *Editor) statusBar() (string, string, string) {
 	}
 	totalLines := len(e.lines)
 	indicator := ""
-	if e.ctrlPState {
-		indicator = " *P"
-	}
-	if e.ctrlLState {
-		indicator = " *L"
-	}
-	if e.ctrlAState {
-		indicator = " *A"
-	}
+
 	center := fmt.Sprintf("%s%s  Ln %d/%d, Col %d%s", name, langInfo, e.cy+1, totalLines, e.cx+1, indicator)
 	lineRunes := make([]rune, e.contentWidth)
 	for i := range lineRunes {
@@ -1277,6 +1313,7 @@ func (e *Editor) pasteFromClipboard() {
 }
 
 func (e *Editor) handleRunCode() {
+	e.statusMessage("Analyzing code with LLM...")
 	code := strings.Join(e.lines, "\n")
 	analysisQuery := "Analyze this code and return a JSON object with fields: language, flags, and args to run the" +
 		"code (if the argument of the program is necessary for its correct launch, then come up with it yourself, based on" +
@@ -1286,7 +1323,7 @@ func (e *Editor) handleRunCode() {
 
 	analysis, err := e.llmQueryWithoutInsert(analysisQuery)
 	if err != nil {
-		e.statusMessage("Parsing error: " + err.Error())
+		e.showError("Parsing error: " + err.Error())
 		return
 	}
 
@@ -1303,11 +1340,11 @@ func (e *Editor) handleRunCode() {
 		end := strings.LastIndexByte(s, '}')
 		if start != -1 && end != -1 && end >= start {
 			if err2 := json.Unmarshal([]byte(s[start:end+1]), &resp); err2 != nil {
-				e.statusMessage("Invalid JSON from LLM: " + err2.Error())
+				e.showError("Invalid JSON from LLM: " + err2.Error())
 				return
 			}
 		} else {
-			e.statusMessage("Invalid JSON from LLM: " + err.Error())
+			e.showError("Invalid JSON from LLM: " + err.Error())
 			return
 		}
 	}
@@ -1319,19 +1356,23 @@ func (e *Editor) handleRunCode() {
 	if lang == "" {
 		lang = "go"
 	}
-
+	e.statusMessage("Running code with " + lang + "...")
 	stdout, stderr, runErr := e.runCodeViaRuncode(code, lang, flags, args)
 	if runErr != nil {
+		e.showError("Execution error: " + runErr.Error())
 		errorQuery := "Analyze the error and suggest corrections for the code: Error: " + runErr.Error() +
 			"\nStderr: " + stderr + "\nCode:\n" + code
+		e.statusMessage("Requesting error analysis from LLM...")
 		fixes, err2 := e.llmQueryWithoutInsert(errorQuery)
 		if err2 != nil {
-			e.statusMessage("Error obtaining corrections:" + err2.Error())
+			e.showError("Error obtaining corrections:" + err2.Error())
 			return
 		}
 		e.insertLLMResponse("\n\n// Recommendations for correction:\n" + fixes)
+		e.statusMessage("Error analysis completed - fixes suggested")
 	} else {
 		e.insertLLMResponse("\n\n// No errors were detected in the code. \n// Execution result.\n" + stdout)
+		e.statusMessage("Code executed successfully")
 	}
 }
 
@@ -1342,10 +1383,13 @@ func (e *Editor) llmQueryWithoutInsert(instruction string) (string, error) {
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
 	}
-	out, err := SendMessageToLLM(instruction, e.llmProvider, e.llmModel)
+	e.statusMessage("Sending analysis request to LLM...")
+	out, err := SendMessageToLLM(instruction, e.llmProvider, e.llmModel, e.llmKey)
 	if err != nil {
+		e.showError("Analysis error: " + err.Error())
 		return "", err
 	}
+	e.statusMessage("Analysis completed successfully")
 	return string(out), nil
 }
 
@@ -1639,8 +1683,6 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlLState = false
 		e.endSelection()
 	case tcell.KeyCtrlC:
-		// Исправление: копирование выделенного текста в буфер редактора и системный буфер
-		// чтобы контекст для LLM (через includeClipboardContext) мог быть передан.
 		if e.selecting {
 			selectedText := e.getSelectedText()
 			if selectedText != "" {
@@ -1652,7 +1694,6 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 				}
 			}
 		} else {
-			// Если ничего не выделено, можно копировать текущую строку (опционально)
 			curLine := e.lines[e.cy]
 			if curLine != "" {
 				e.clipboard = curLine
@@ -2328,17 +2369,20 @@ func (e *Editor) llmQuery(instruction string) {
 		}
 	}
 
-	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel)
+	e.statusMessage("Sending request to LLM...")
+
+	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel, e.llmKey)
 	if err != nil {
-		e.statusMessage("LLM error: " + err.Error())
+		e.showError("LLM error: " + err.Error())
 		return
 	}
 
 	resp := string(out)
 	if strings.TrimSpace(resp) == "" {
-		e.statusMessage("LLM returned an empty response")
+		e.showError("LLM returned an empty response")
 		return
 	}
+	e.statusMessage("LLM response received successfully")
 	e.insertLLMResponse(resp)
 }
 
@@ -3974,7 +4018,7 @@ func extractContentFromLLMResponse(body []byte) (string, error) {
 	return "", errors.New("unable to extract content from LLM response")
 }
 
-func sendMessageToLLMUsingURL(endpoint, model, message string) (string, error) {
+func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, error) {
 	payload := map[string]interface{}{
 		"model": model,
 		"messages": []map[string]string{
@@ -3993,21 +4037,10 @@ func sendMessageToLLMUsingURL(endpoint, model, message string) (string, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	var apiKey string
-	if *llmURLKey != "" {
-		apiKey = *llmURLKey
-	} else if v := os.Getenv("OPENAI_API_KEY"); v != "" {
-		apiKey = v
-	} else if v := os.Getenv("AI_API_KEY"); v != "" {
-		apiKey = v
-	} else if v := os.Getenv("OPENROUTER_API_KEY"); v != "" {
-		apiKey = v
-	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	// Таймаут и контекст
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req = req.WithContext(ctx)
@@ -4037,10 +4070,15 @@ func sendMessageToLLMUsingURL(endpoint, model, message string) (string, error) {
 	return content, nil
 }
 
-func SendMessageToLLM(message, provider, model string) (string, error) {
+func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 	if isURL(provider) {
-		return sendMessageToLLMUsingURL(provider, model, message)
+		result, err := sendMessageToLLMUsingURL(provider, model, message, apiKey)
+		if err != nil {
+			return "", fmt.Errorf("URL provider error: %w", err)
+		}
+		return result, nil
 	}
+
 	parsePollinationsResponse := func(body []byte) (string, error) {
 		var m map[string]interface{}
 		if err := json.Unmarshal(body, &m); err != nil {
@@ -4102,8 +4140,11 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 		return "", errors.New("ollama: не удалось распознать текст ответа")
 	}
 
-	sendPollinations := func() (string, error) {
-		apiKey := os.Getenv("POLLINATIONS_API_KEY")
+	sendPollinations := func(apiKeyArg string) (string, error) {
+		apiKey = apiKeyArg
+		if apiKey == "" {
+			apiKey = os.Getenv("POLLINATIONS_API_KEY")
+		}
 		url := "https://text.pollinations.ai/openai"
 		type pollinationsMessage struct {
 			Role    string `json:"role"`
@@ -4168,12 +4209,15 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 	}
 
 	// url := "https://api.llm7.io/v1/chat/completions"
-	sendLLM7 := func() (string, error) {
+	sendLLM7 := func(apiKeyArg string) (string, error) {
 		baseURL := os.Getenv("LLM7_BASE_URL")
 		if baseURL == "" {
 			baseURL = "https://api.llm7.io/v1"
 		}
-		apiKey := os.Getenv("LLM7_API_KEY")
+		apiKey = apiKeyArg
+		if apiKey == "" {
+			apiKey = os.Getenv("LLM7_API_KEY")
+		}
 		url := baseURL + "/chat/completions"
 
 		type llm7Message struct {
@@ -4207,6 +4251,9 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		} else {
+			apiKey = "unused"
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 
@@ -4328,11 +4375,23 @@ func SendMessageToLLM(message, provider, model string) (string, error) {
 
 	switch provider {
 	case "pollinations":
-		return sendPollinations()
+		result, err := sendPollinations(apiKey)
+		if err != nil {
+			return "", fmt.Errorf("Pollinations error: %w", err)
+		}
+		return result, nil
 	case "llm7":
-		return sendLLM7()
+		result, err := sendLLM7(apiKey)
+		if err != nil {
+			return "", fmt.Errorf("LLM7 error: %w", err)
+		}
+		return result, nil
 	case "ollama":
-		return sendOllama()
+		result, err := sendOllama()
+		if err != nil {
+			return "", fmt.Errorf("Ollama error: %w", err)
+		}
+		return result, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}
