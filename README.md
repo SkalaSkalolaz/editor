@@ -40,16 +40,16 @@ It is a text editor for working in the terminal, written in the Go language, usi
 Run the compiled file:
 
 ``bash
-./editor [provider] [model] [file] [--key {key}]
+./editor [provider]/[URL provider] [model] [file] [key]
 ``
 provider {default: ollama}, model {default: gemma3:4b}
 ### Flags
 
-* `string': LLM provider (by default, it is taken from the environment variable `LLM_PROVIDER`).
-*   `string`: The LLM model (by default, it is taken from the environment variable `LLM_MODEL`).
-* `string': The path to the file to open.
-* `--key {key}`: Key LLM provider
-* `-v, -version': Show the editor version.
+* `string`: LLM provider (by default, it is taken from the environment variable `LLM_PROVIDER`).
+* `string`: The LLM model (by default, it is taken from the environment variable `LLM_MODEL`).
+* `string`: The path to the file to open.
+* `string`: Key LLM provider
+* `-v, -version`: Show the editor version.
 * `-h, --help`: Show extended help.
 
 If the file path is not specified in the flags, it can be passed as the first command line argument.
@@ -78,7 +78,7 @@ If the file path is not specified in the flags, it can be passed as the first co
 
 ## Version
 
-Current version: 1.6.8
+Current version: 1.6.9
 
 ## Dependencies
 
@@ -139,7 +139,7 @@ See [CREDITS.md ](CREDITS.md ) — acknowledgements and information about addict
 Запустите скомпилированный файл:
 
 ```bash
-./editor  [провайдер] [модель] [файл] [--key {key}]
+./editor  [провайдер]/[URL провайдера] [модель] [файл] [ключ]
 ```
 провайдер {default: ollama}, модель {default: gemma3:4b}
 ### Флаги
@@ -147,7 +147,7 @@ See [CREDITS.md ](CREDITS.md ) — acknowledgements and information about addict
 *   `string`: Провайдер LLM (по умолчанию берется из переменной окружения `LLM_PROVIDER`).
 *   `string`: Модель LLM (по умолчанию берется из переменной окружения `LLM_MODEL`).
 *   `string`: Путь к файлу для открытия.
-*   * `--key {key}`: Ключ иного LLM провайдера
+*   `string`: Ключ иного LLM провайдера
 *   `-v, -version`: Показать версию редактора.
 *   `-h, --help`: Показать расширенную справку.
 
@@ -177,7 +177,7 @@ See [CREDITS.md ](CREDITS.md ) — acknowledgements and information about addict
 
 ## Версия
 
-Текущая версия: 1.6.8
+Текущая версия: 1.6.9
 
 ## Зависимости
 
