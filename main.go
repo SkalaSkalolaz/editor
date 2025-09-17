@@ -29,7 +29,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.8"
+const Version = "1.6.9"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -65,8 +65,6 @@ var (
 	styleOperator = tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
 	stylePreproc  = tcell.StyleDefault.Foreground(tcell.ColorPurple).Background(tcell.ColorBlack)
 )
-
-var llmURLKey *string
 
 // printVersion prints the editor version.
 // printVersion выводит версию редактора.
@@ -119,7 +117,7 @@ func printUsageExtended() {
 // printUsageExtended выводит расширенную справку.
 func printUsageRU() {
 	fmt.Println("Editor - расширенная справка")
-	fmt.Println("Usage: editor  [provider] [model] [path] [--key {sn-...}]")
+	fmt.Println("Usage: editor  [provider]/[URL provider] [model] [path] [sn-...]")
 	fmt.Println()
 	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
 	fmt.Println("Flags:")
@@ -158,13 +156,14 @@ func printUsageRU() {
 	fmt.Println("  editor pollinations openai /path/to/file.txt")
 	fmt.Println("  editor llm7 help")
 	fmt.Println("  editor pollinations help")
-	fmt.Println("  editor https://openrouter.ai/api/v1/chat/completions qwen/qwen3-coder:free file.txt --key sn-...")
+	fmt.Println("  editor https://openai.ai/api/v1/chat/completions gpt-4.1-nano file.txt sn-...")
+	fmt.Println("  editor openrouter deepseek/deepseek-r1:free file.txt sn-...")
 	fmt.Println("  editor file.txt")
 }
 
 func printUsageEN() {
 	fmt.Println("Editor - extended help")
-	fmt.Println("Usage: editor  [provider] [model] [path] [--key {sn-...}]")
+	fmt.Println("Usage: editor  [provider]/[URL provider] [model] [path] [sn-...]")
 	fmt.Println()
 	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
 	fmt.Println("Flags:")
@@ -202,7 +201,8 @@ func printUsageEN() {
 	fmt.Println("  editor pollinations openai /path/to/file.txt")
 	fmt.Println("  editor llm7 help")
 	fmt.Println("  editor pollinations help")
-	fmt.Println("  editor https://openrouter.ai/api/v1/chat/completions qwen/qwen3-coder:free file.txt --key sn-...")
+	fmt.Println("  editor https://openai.ai/api/v1/chat/completions gpt-4.1-nano file.txt sn-...")
+	fmt.Println("  editor openrouter deepseek/deepseek-r1:free file.txt sn-...")
 	fmt.Println("  editor file.txt")
 }
 
@@ -2348,12 +2348,6 @@ func (e *Editor) llmQuery(instruction string) {
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
 	}
-	if *llmURLKey != "" {
-		e.llmKey = *llmURLKey
-	}
-	// if strings.TrimSpace(e.llmKey) == "" {
-	// 	e.llmKey = ""
-	// }
 
 	payload := instruction
 	if cb, err := clipboard.ReadAll(); err == nil {
@@ -2460,11 +2454,11 @@ func main() {
 	provider := os.Getenv("LLM_PROVIDER")
 	model := os.Getenv("LLM_MODEL")
 	path := ""
+	keyFromArg := ""
 	flag.StringVar(&path, "path", "", "path to file")
 	flag.StringVar(&provider, "provider", provider, "LLMS provider")
 	flag.StringVar(&model, "model", model, "LLMS model")
-	llmURLKey = flag.String("key", "", "Используйте личный API-ключ.")
-	// flag.StringVar(&llmURLKey, "key", "", "LLM API key для URL-based провайдеров")
+	flag.StringVar(&keyFromArg, "key", keyFromArg, "LLM API key для URL-based провайдеров")
 	var showVersion bool
 	flag.BoolVar(&showVersion, "version", false, "Show version")
 	flag.BoolVar(&showVersion, "v", false, "Show version (short)")
@@ -2477,6 +2471,10 @@ func main() {
 		provider = args[0]
 		model = args[1]
 		path = args[2]
+		if len(args) >= 4 {
+			keyFromArg = args[3]
+		}
+
 	case len(args) == 2:
 		provider = args[0]
 		model = args[1]
@@ -2489,11 +2487,15 @@ func main() {
 			case "llm7":
 				nameModelLlm7()
 				return
+			case "openrouter":
+				nameModelOpenRouter()
+				return
 			default:
 
 				fmt.Println("Available models for known providers:")
 				nameModelPollinations()
 				nameModelLlm7()
+				nameModelOpenRouter()
 			}
 			return
 		}
@@ -2511,6 +2513,7 @@ func main() {
 	}
 
 	editor := NewEditor(path, provider, model)
+	editor.llmKey = keyFromArg
 	if editor == nil {
 		return
 	}
@@ -4031,6 +4034,7 @@ func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, 
 	if err != nil {
 		return "", err
 	}
+
 	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
 	if err != nil {
 		return "", err
@@ -4038,10 +4042,14 @@ func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, 
 	req.Header.Set("Content-Type", "application/json")
 
 	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+		if strings.HasPrefix(apiKey, "sn-") {
+			req.Header.Set("Authorization", apiKey)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
 	req = req.WithContext(ctx)
 
@@ -4050,6 +4058,7 @@ func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, 
 			Proxy: http.ProxyFromEnvironment,
 		},
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("LLM URL request failed: %w", err)
@@ -4060,9 +4069,11 @@ func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, 
 	if err != nil {
 		return "", err
 	}
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("LLM URL returned status %d: %s", resp.StatusCode, string(respBody))
 	}
+
 	content, err := extractContentFromLLMResponse(respBody)
 	if err != nil {
 		return "", err
@@ -4179,7 +4190,7 @@ func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 		defer cancel()
 		req = req.WithContext(ctx)
 
@@ -4206,6 +4217,75 @@ func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 			return "", fmt.Errorf("pollinations: разбор ответа не удался: %w", err)
 		}
 		return parsed, nil
+	}
+
+	sendOpenRouter := func(apiKeyArg string) (string, error) {
+		baseURL := os.Getenv("OPENROUTER_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://openrouter.ai/api/v1"
+		}
+		apiKey = apiKeyArg
+		if apiKey == "" {
+			apiKey = os.Getenv("OPENROUTER_API_KEY")
+		}
+		url := baseURL + "/chat/completions"
+		payload := map[string]interface{}{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "user", "content": message},
+			},
+			"temperature": 0.2,
+			"top_p":       1.0,
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return "", err
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		if apiKey != "" {
+			if strings.HasPrefix(apiKey, "sn-") {
+				req.Header.Set("Authorization", apiKey)
+			} else {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+		defer cancel()
+		req = req.WithContext(ctx)
+
+		client := &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("LLM URL request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", err
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", fmt.Errorf("LLM URL returned status %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		content, err := extractContentFromLLMResponse(respBody)
+		if err != nil {
+			return "", err
+		}
+		return content, nil
 	}
 
 	// url := "https://api.llm7.io/v1/chat/completions"
@@ -4257,7 +4337,7 @@ func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 		defer cancel()
 		req = req.WithContext(ctx)
 
@@ -4343,7 +4423,7 @@ func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 480*time.Second)
 		defer cancel()
 		req = req.WithContext(ctx)
 
@@ -4384,6 +4464,12 @@ func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 		result, err := sendLLM7(apiKey)
 		if err != nil {
 			return "", fmt.Errorf("LLM7 error: %w", err)
+		}
+		return result, nil
+	case "openrouter":
+		result, err := sendOpenRouter(apiKey)
+		if err != nil {
+			return "", fmt.Errorf("OpenRouter error: %w", err)
 		}
 		return result, nil
 	case "ollama":
@@ -4477,4 +4563,62 @@ func nameModelLlm7() {
 	}
 
 	fmt.Println("Не удалось разобрать ответ")
+}
+
+func nameModelOpenRouter() {
+	url := "https://openrouter.ai/api/v1/models"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	type ApiMod struct {
+		ID            string `json:"id"`
+		ContextLength int    `json:"context_length"`
+		Architecture  struct {
+			InputModalities  []string `json:"input_modalities"`
+			OutputModalities []string `json:"output_modalities"`
+		} `json:"architecture"`
+	}
+	type DataWrapper struct {
+		Data []ApiMod `json:"data"`
+	}
+
+	var dw DataWrapper
+	if err := json.Unmarshal(body, &dw); err != nil {
+		fmt.Println("Не удалось разобрать ответ:", err)
+		return
+	}
+	if len(dw.Data) == 0 {
+		fmt.Println("Нет данных о моделях")
+		return
+	}
+
+	fmt.Printf("Модели OpenRouter :\n")
+	for _, m := range dw.Data {
+		in := "не указано"
+		if len(m.Architecture.InputModalities) > 0 {
+			in = strings.Join(m.Architecture.InputModalities, ", ")
+		}
+		out := "не указано"
+		if len(m.Architecture.OutputModalities) > 0 {
+			out = strings.Join(m.Architecture.OutputModalities, ", ")
+		}
+		fmt.Printf(" %-40s context=%d inputs=[%s] outputs=[%s]\n", m.ID, m.ContextLength, in, out)
+	}
 }
