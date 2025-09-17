@@ -29,7 +29,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.9"
+const Version = "1.6.10"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -74,7 +74,6 @@ func printVersion() {
 
 // detectSystemLanguage возвращает код языка системы: "ru", "en" или "de"
 func detectSystemLanguage() string {
-	// ищем наиболее надёжно в стандартных переменных окружения
 	var candidates = []string{
 		os.Getenv("LANG"),
 		os.Getenv("LC_ALL"),
@@ -86,11 +85,9 @@ func detectSystemLanguage() string {
 			continue
 		}
 		lv := strings.ToLower(v)
-		// убираем возможные суффиксы типа ".UTF-8", "@locale" и т.д.
 		if dot := strings.IndexByte(lv, '.'); dot != -1 {
 			lv = lv[:dot]
 		}
-		// приоритет ru, затем de, затем en
 		if strings.Contains(lv, "ru") {
 			return "ru"
 		}
@@ -98,7 +95,6 @@ func detectSystemLanguage() string {
 			return "en"
 		}
 	}
-	// По умолчанию английский
 	return "en"
 }
 
@@ -264,12 +260,10 @@ type Editor struct {
 	selecting          bool
 	lineSelecting      bool
 	terminalPrompt     *TerminalPrompt
-	// includeCtrlAContext     bool
-	// includeClipboardContext bool
-	// encoding                string
-	llmLastPrompt string
-	errorMessage  string
-	errorShowTime time.Time
+	llmLastPrompt      string
+	errorMessage       string
+	errorShowTime      time.Time
+	lastSearch         string
 }
 
 type TerminalPrompt struct {
@@ -417,9 +411,6 @@ func (e *Editor) Run() error {
 // refreshSize updates the editor's dimensions.
 // refreshSize обновляет размеры редактора.
 func (e *Editor) refreshSize() {
-	// e.width = e.contentWidth
-	// e.height = e.contentHeight
-	// e.canvasWidth = e.contentWidth
 	w, h := e.screen.Size()
 	if w <= 0 {
 		w = 1
@@ -654,9 +645,7 @@ func wrapText(text string, width int) []string {
 func (e *Editor) showError(msg string) {
 	e.errorMessage = msg
 	e.errorShowTime = time.Now()
-	e.render() // Принудительно перерисовываем
-
-	// Auto-hide after 3 seconds
+	e.render()
 	go func() {
 		time.Sleep(5 * time.Second)
 		if time.Since(e.errorShowTime) >= 5*time.Second {
@@ -1104,6 +1093,101 @@ func (e *Editor) getSelectionRange() (int, int, int, int) {
 	return startLine, startCol, endLine, endCol
 }
 
+func getLineCommentPrefix(lang Language) (string, bool) {
+	switch lang {
+	case LangGo, LangC, LangCpp, LangKotlin, LangSwift:
+		return "// ", true
+	case LangFortran:
+		return "! ", true
+	case LangPython, LangRuby:
+		return "# ", true
+	case LangLisp, LangAssembly:
+		return "; ", true
+	default:
+		return "", false
+	}
+}
+
+// toggleCommentSelection комментирует или снимает комментарий у выделённых строк.
+// Примечание: выполняется только если есть активное построчное выделение (lineSelecting)
+func (e *Editor) toggleCommentSelection() {
+	if !e.selecting || !e.lineSelecting {
+		return
+	}
+	prefix, ok := getLineCommentPrefix(e.language)
+	if !ok || prefix == "" {
+		return
+	}
+	lo, _, hi, _ := e.getSelectionRange()
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	e.pushUndo()
+	allCommented := true
+	for i := lo; i <= hi; i++ {
+		line := e.lines[i]
+		lead := 0
+		for lead < len(line) && (line[lead] == ' ' || line[lead] == '\t') {
+			lead++
+		}
+		if lead+len(prefix) > len(line) || line[lead:lead+len(prefix)] != prefix {
+			allCommented = false
+			break
+		}
+	}
+
+	if allCommented {
+		for i := lo; i <= hi; i++ {
+			l := e.lines[i]
+			lead := 0
+			for lead < len(l) && (l[lead] == ' ' || l[lead] == '\t') {
+				lead++
+			}
+			if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
+				e.lines[i] = l[:lead] + l[lead+len(prefix):]
+			}
+		}
+	} else {
+		for i := lo; i <= hi; i++ {
+			l := e.lines[i]
+			lead := 0
+			for lead < len(l) && (l[lead] == ' ' || l[lead] == '\t') {
+				lead++
+			}
+			if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
+				continue
+			}
+			e.lines[i] = l[:lead] + prefix + l[lead:]
+		}
+	}
+	e.dirty = true
+	e.ensureVisible()
+	e.endSelection()
+}
+
+func (e *Editor) toggleCommentLine() {
+	lineIdx := e.cy
+	if lineIdx < 0 || lineIdx >= len(e.lines) {
+		return
+	}
+	line := e.lines[lineIdx]
+	prefix, ok := getLineCommentPrefix(e.language)
+	if !ok || prefix == "" {
+		return
+	}
+	lead := 0
+	for lead < len(line) && (line[lead] == ' ' || line[lead] == '\t') {
+		lead++
+	}
+	if len(line) >= lead+len(prefix) && line[lead:lead+len(prefix)] == prefix {
+		e.lines[lineIdx] = line[:lead] + line[lead+len(prefix):]
+	} else {
+		e.lines[lineIdx] = line[:lead] + prefix + line[lead:]
+	}
+	e.dirty = true
+	e.ensureVisible()
+}
+
 // getSelectedText возвращает текст из текущего выделения.
 // При lineSelecting — возвращает полные строки.
 func (e *Editor) getSelectedText() string {
@@ -1257,8 +1341,8 @@ func (e *Editor) statusBar() (string, string, string) {
 		lineRunes[pos] = r
 	}
 	top := string(lineRunes)
-	bottom2 := "^L Prompt    ^R Run code  ^N New file  ^O Open file ^S Save file ^Q Quit file ^F Find text ^G Go to line"
-	bottom1 := "^P Generates ^C Copy      ^V Insert    ^B Select    ^A All       ^X Remove    ^Z Cancel    ^E Return    ^T Terminal"
+	bottom2 := "^L Prompt    ^R Run code ^N New file ^O Open file ^S Save file ^Q Quit file ^F Find text ^G Go to line ^K Comment"
+	bottom1 := "^P Generates ^C Copy     ^V Insert   ^B Select    ^A All       ^X Remove    ^Z Cancel    ^E Return     ^T Terminal"
 
 	return top, bottom1, bottom2
 }
@@ -1554,6 +1638,12 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		}
 		e.ctrlAState = false
 		e.selectAllBeforeLLM = true
+	case tcell.KeyCtrlK:
+		if e.selecting && e.lineSelecting {
+			e.toggleCommentSelection()
+		} else {
+			e.toggleCommentLine()
+		}
 	case tcell.KeyCtrlA:
 		if !e.selecting {
 			e.selecting = true
@@ -1605,8 +1695,28 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 			e.quit = true
 		}
 	case tcell.KeyCtrlF:
-		e.promptShow("Search", func(input string) {
+		e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
+			trimmed := strings.TrimSpace(input)
+			if trimmed == "" {
+				e.lastSearch = input
+				return
+			}
+			if strings.Contains(trimmed, " -> ") {
+				parts := strings.SplitN(trimmed, " -> ", 2)
+				if len(parts) == 2 {
+					old := parts[0]
+					newS := parts[1]
+					replaced := e.replaceAllOccurrences(old, newS)
+					e.statusMessage(fmt.Sprintf("Replaced %d occurrence(s) of %q with %q", replaced, old, newS))
+					e.prompt = nil
+					return
+				}
+			}
+
 			e.findAndJump(input)
+			if strings.TrimSpace(input) != "" {
+				e.lastSearch = input
+			}
 		})
 		e.ctrlAState = false
 		e.ctrlPState = false
@@ -1860,6 +1970,12 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlPState = false
 		e.ctrlLState = false
 	case tcell.KeyBackspace, tcell.KeyBackspace2:
+		if e.lastSearch != "" && e.cx == 0 && e.cy == 0 && !e.selecting {
+			e.lastSearch = ""
+			e.statusMessage("Last search cleared")
+			return
+		}
+
 		if e.selecting {
 			e.deleteSelection()
 		} else {
@@ -1995,6 +2111,32 @@ func (e *Editor) promptShow(label string, cb func(string)) {
 	e.multiLinePrompt = nil
 }
 
+func (e *Editor) promptShowWithInitial(label string, prefill string, cb func(string)) {
+	e.prompt = &Prompt{
+		Label:    label,
+		Value:    prefill,
+		Callback: cb,
+	}
+	e.multiLinePrompt = nil
+}
+
+// replaceAllOccurrences заменяет во всём документе все вхождения old на new.
+// Возвращает число сделанных замен.
+func (e *Editor) replaceAllOccurrences(old, new string) int {
+	if old == "" {
+		return 0
+	}
+	e.pushUndo()
+	count := 0
+	for i := range e.lines {
+		count += strings.Count(e.lines[i], old)
+		e.lines[i] = strings.ReplaceAll(e.lines[i], old, new)
+	}
+	e.dirty = true
+	e.ensureVisible()
+	return count
+}
+
 // multiLinePromptShow shows a multi-line prompt to the user.
 // multiLinePromptShow показывает пользователю многострочный запрос.
 func (e *Editor) multiLinePromptShow(label string, cb func(string)) {
@@ -2009,6 +2151,17 @@ func (e *Editor) multiLinePromptShow(label string, cb func(string)) {
 // handlePromptInput handles input for the prompt.
 // handlePromptInput обрабатывает ввод для запроса.
 func (e *Editor) handlePromptInput(ev *tcell.EventKey) {
+	if ev.Key() == tcell.KeyCtrlV {
+		if e.prompt != nil && e.prompt.Label == "Search" {
+			if text, err := clipboard.ReadAll(); err == nil {
+				text = strings.ReplaceAll(text, "\r\n", "\n")
+				text = strings.ReplaceAll(text, "\r", "\n")
+				e.prompt.Value = text
+				e.render()
+			}
+			return
+		}
+	}
 	switch ev.Key() {
 	case tcell.KeyEsc:
 		e.prompt = nil
@@ -2114,6 +2267,7 @@ func (e *Editor) findAndJump(query string) {
 			e.cy = (startY + i) % totalLines
 			e.cx = idx
 			e.ensureVisible()
+			e.lastSearch = strings.TrimSpace(query)
 			return
 		}
 	}
