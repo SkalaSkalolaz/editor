@@ -29,7 +29,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.6.10"
+const Version = "1.7"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -135,7 +135,7 @@ func printUsageRU() {
 	fmt.Println("  Ctrl-O  Открыть файл")
 	fmt.Println("  Ctrl-N  Новый файл")
 	fmt.Println("  Ctrl-Q  Выход из редактора")
-	fmt.Println("  Ctrl-F  Поиск текста")
+	fmt.Println("  Ctrl-F  Поиск текста. Для замены текста используй символ -> .\n          Пример: Print -> Printf")
 	fmt.Println("  Ctrl-G  Перейти к строке")
 	fmt.Println("  Ctrl-Z  Отменить")
 	fmt.Println("  Ctrl-E  Вернуть отменённое")
@@ -145,6 +145,8 @@ func printUsageRU() {
 	fmt.Println("  Ctrl-C  Копировать в буфер обмена")
 	fmt.Println("  Ctrl-V  Вставить буфер обмена")
 	fmt.Println("  Ctrl-T  Терминал ОС (печать ответа в canvas)")
+	fmt.Println("  Ctrl-K  Выставить символ коментария для строки или выделеных строк,\n          убрать символ коментария")
+	fmt.Println("  Ctrl-I  Перевод строки или выделеного текста на требуемый язык.\n          После перевода осуществляется замена. По умолчанию, язык локали.")
 	fmt.Println("Навигация:")
 	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
 	fmt.Println()
@@ -180,7 +182,7 @@ func printUsageEN() {
 	fmt.Println("  Ctrl-O  Open file")
 	fmt.Println("  Ctrl-N  New file")
 	fmt.Println("  Ctrl-Q  Quit editor")
-	fmt.Println("  Ctrl-F  Find text")
+	fmt.Println("  Ctrl-F  Find text. To replace the text, use the symbol -> .\n          Example: Print -> Printf.")
 	fmt.Println("  Ctrl-G  Go to line")
 	fmt.Println("  Ctrl-Z  Undo")
 	fmt.Println("  Ctrl-E  Redo")
@@ -190,6 +192,8 @@ func printUsageEN() {
 	fmt.Println("  Ctrl-C  Copy to clipboard")
 	fmt.Println("  Ctrl-V  Paste clipboard")
 	fmt.Println("  Ctrl-T  OS terminal (print LLM answer on canvas)")
+	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines,\n            remove the comment symbol.")
+	fmt.Println("  Ctrl-I  Line break or selected text into the required language.\n          After translation, replacement is carried out. By default, the locale language.")
 	fmt.Println("Navigation:")
 	fmt.Println("  Arrows: cursor movement, Home/End, PgUp/PgDn — navigation in text")
 	fmt.Println()
@@ -264,6 +268,7 @@ type Editor struct {
 	errorMessage       string
 	errorShowTime      time.Time
 	lastSearch         string
+	llmPrefill         string
 }
 
 type TerminalPrompt struct {
@@ -493,9 +498,12 @@ func (e *Editor) buildDisplayBuffer() []DisplayRow {
 
 func (e *Editor) llmPromptWithPrevShow() {
 	e.multiLinePrompt = &MultiLinePrompt{
-		Label:    "To send the prompt, click Ctrl-L",
-		Value:    e.llmLastPrompt,
-		Callback: func(input string) { e.llmQuery(input) },
+		Label: "Enter your prompt. /To send it, press Ctrl-L/",
+		Value: e.llmPrefill,
+		Callback: func(input string) {
+			e.llmPrefill = input
+			e.llmQuery(input)
+		},
 	}
 	e.prompt = nil
 }
@@ -503,6 +511,11 @@ func (e *Editor) llmPromptWithPrevShow() {
 // cursorDisplayPosition calculates the display position of the cursor.
 // cursorDisplayPosition вычисляет позицию отображения курсора.
 func (e *Editor) cursorDisplayPosition() (int, int, int) {
+	if e.cy < 0 {
+		e.cy = 0
+	} else if e.cy >= len(e.lines) {
+		e.cy = len(e.lines) - 1
+	}
 	totalBefore := 0
 	for i := 0; i < e.cy; i++ {
 		totalBefore += len(e.wrapLine(e.lines[i]))
@@ -557,6 +570,116 @@ func (e *Editor) ensureVisible() {
 		e.offsetY = dispIdx
 	} else if dispIdx >= e.offsetY+visibleRows {
 		e.offsetY = dispIdx - visibleRows + 1
+	}
+}
+
+// insertTextAtCursor inserts given text at current cursor position, handling multi-line text.
+func (e *Editor) insertTextAtCursor(text string) {
+	e.pushUndo()
+	parts := strings.Split(text, "\n")
+	if len(parts) == 0 {
+		return
+	}
+	if e.cy < 0 {
+		e.cy = 0
+	}
+	for e.cy >= len(e.lines) {
+		e.lines = append(e.lines, "")
+	}
+	lineRunes := []rune(e.lines[e.cy])
+	if e.cx < 0 {
+		e.cx = 0
+	}
+	if e.cx > len(lineRunes) {
+		e.cx = len(lineRunes)
+	}
+
+	if len(parts) == 1 {
+		left := string(lineRunes[:e.cx])
+		right := string(lineRunes[e.cx:])
+		e.lines[e.cy] = left + parts[0] + right
+		e.cx += len([]rune(parts[0]))
+	} else {
+		origCy := e.cy
+		left := string(lineRunes[:e.cx])
+		right := string(lineRunes[e.cx:])
+		e.lines[e.cy] = left + parts[0]
+		for i := 1; i < len(parts)-1; i++ {
+			insertLine := parts[i]
+			e.lines = append(e.lines[:e.cy+1], append([]string{insertLine}, e.lines[e.cy+1:]...)...)
+			e.cy++
+		}
+		last := parts[len(parts)-1] + right
+		e.lines = append(e.lines[:e.cy+1], append([]string{last}, e.lines[e.cy+1:]...)...)
+		e.cy = origCy + (len(parts) - 1)
+		e.cx = len([]rune(parts[len(parts)-1]))
+	}
+
+	e.dirty = true
+	e.ensureVisible()
+}
+
+// deleteWordAfterCursor удаляет слово, которое начинается либо после курсора,
+// либо является словом, в котором находится курсор (если курсор внутри слова).
+func (e *Editor) deleteWordAfterCursor() {
+	if e.cy < 0 || e.cy >= len(e.lines) {
+		return
+	}
+	e.pushUndo()
+
+	line := e.lines[e.cy]
+	runes := []rune(line)
+	if e.cx < 0 {
+		e.cx = 0
+	}
+	if e.cx >= len(runes) {
+		if e.cy < len(e.lines)-1 {
+			e.lines[e.cy] = line + e.lines[e.cy+1]
+			e.lines = append(e.lines[:e.cy+1], e.lines[e.cy+2:]...)
+			e.dirty = true
+			e.ensureVisible()
+		}
+		return
+	}
+
+	idx := e.cx
+	if idx > 0 && !unicode.IsSpace(runes[idx-1]) {
+		start := idx - 1
+		for start > 0 && !unicode.IsSpace(runes[start-1]) {
+			start--
+		}
+		end := idx
+		for end < len(runes) && !unicode.IsSpace(runes[end]) {
+			end++
+		}
+		e.lines[e.cy] = string(append(runes[:start], runes[end:]...))
+		e.cx = start
+		e.dirty = true
+		e.ensureVisible()
+		return
+	}
+	i := idx
+	for i < len(runes) && unicode.IsSpace(runes[i]) {
+		i++
+	}
+	if i < len(runes) && !unicode.IsSpace(runes[i]) {
+		start := i
+		for i < len(runes) && !unicode.IsSpace(runes[i]) {
+			i++
+		}
+		e.lines[e.cy] = string(append(runes[:start], runes[i:]...))
+		e.cx = start
+		e.dirty = true
+		e.ensureVisible()
+		return
+	}
+
+	if e.cy < len(e.lines)-1 {
+		e.lines[e.cy] = line + e.lines[e.cy+1]
+		e.lines = append(e.lines[:e.cy+1], e.lines[e.cy+2:]...)
+		e.cx = len([]rune(line))
+		e.dirty = true
+		e.ensureVisible()
 	}
 }
 
@@ -1573,6 +1696,16 @@ func (e *Editor) handleTerminalInput(ev *tcell.EventKey) {
 		return
 	}
 	switch ev.Key() {
+	case tcell.KeyCtrlV:
+		if text, err := clipboard.ReadAll(); err == nil {
+			text = strings.ReplaceAll(text, "\r\n", "\n")
+			text = strings.ReplaceAll(text, "\r", "\n")
+			e.terminalPrompt.Value += text
+			e.render()
+		} else {
+			e.statusMessage("Paste error: " + err.Error())
+		}
+
 	case tcell.KeyEsc:
 		e.terminalPrompt = nil
 	case tcell.KeyEnter:
@@ -1612,6 +1745,50 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	shiftPressed := ev.Modifiers()&tcell.ModShift != 0
 
 	switch ev.Key() {
+	case tcell.KeyCtrlI:
+		selectedText := e.getSelectedText()
+		hasSelection := strings.TrimSpace(selectedText) != ""
+		var sourceText string
+		if hasSelection {
+			sourceText = selectedText
+		} else {
+			sourceText = e.lines[e.cy]
+		}
+		e.promptShow("Translate to language", func(input string) {
+			defaultLang := detectSystemLanguage()
+			targetLang := strings.TrimSpace(input)
+			if targetLang == "" {
+				targetLang = defaultLang
+			}
+			prompt := e.translationPrompt(sourceText, targetLang)
+
+			translation, llmErr := e.llmQueryTranslate(prompt)
+			if llmErr != nil {
+				e.showError("LLM error: " + llmErr.Error())
+				return
+			}
+			translation = strings.TrimSpace(translation)
+			if translation == "" {
+				e.statusMessage("Translation is empty")
+				return
+			}
+			if hasSelection {
+				e.deleteSelection()
+			}
+			e.insertTextAtCursor(translation)
+		})
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyDelete:
+		e.deleteWordAfterCursor()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+		// можно вернуть, если не хотите дальше обрабатывать Delete
+		// you can return if you do not want to process Delete further.
+		// return
+
 	case tcell.KeyCtrlT:
 		e.showTerminalPrompt()
 	case tcell.KeyCtrlR:
@@ -2152,16 +2329,22 @@ func (e *Editor) multiLinePromptShow(label string, cb func(string)) {
 // handlePromptInput обрабатывает ввод для запроса.
 func (e *Editor) handlePromptInput(ev *tcell.EventKey) {
 	if ev.Key() == tcell.KeyCtrlV {
-		if e.prompt != nil && e.prompt.Label == "Search" {
-			if text, err := clipboard.ReadAll(); err == nil {
-				text = strings.ReplaceAll(text, "\r\n", "\n")
-				text = strings.ReplaceAll(text, "\r", "\n")
+		if text, err := clipboard.ReadAll(); err == nil {
+			text = strings.ReplaceAll(text, "\r\n", "\n")
+			text = strings.ReplaceAll(text, "\r", "\n")
+			if e.prompt != nil {
 				e.prompt.Value = text
 				e.render()
+			} else if e.multiLinePrompt != nil {
+				e.multiLinePrompt.Value += text
+				e.render()
 			}
-			return
+		} else {
+			e.statusMessage("Paste error: " + err.Error())
 		}
+		return
 	}
+
 	switch ev.Key() {
 	case tcell.KeyEsc:
 		e.prompt = nil
@@ -2192,6 +2375,27 @@ func (e *Editor) handlePromptInput(ev *tcell.EventKey) {
 // handleMultiLinePromptInput handles input for the multi-line prompt.
 // handleMultiLinePromptInput обрабатывает ввод для многострочного запроса.
 func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
+	if ev.Key() == tcell.KeyCtrlV {
+		if e.multiLinePrompt != nil {
+			if text, err := clipboard.ReadAll(); err == nil {
+				text = strings.ReplaceAll(text, "\r\n", "\n")
+				text = strings.ReplaceAll(text, "\r", "\n")
+				e.multiLinePrompt.Value = text
+				e.render()
+			}
+			return
+		}
+		if e.prompt != nil && e.prompt.Label == "Search" {
+			if text, err := clipboard.ReadAll(); err == nil {
+				text = strings.ReplaceAll(text, "\r\n", "\n")
+				text = strings.ReplaceAll(text, "\r", "\n")
+				e.prompt.Value = text
+				e.render()
+			}
+			return
+		}
+	}
+
 	switch ev.Key() {
 	case tcell.KeyEsc:
 		e.multiLinePrompt = nil
@@ -2487,10 +2691,45 @@ func (e *Editor) sendCommentToLLM() {
 	e.llmQuery(instruction)
 }
 
+// translationPrompt формирует единообразный LLM-промпт для перевода.
+func (e *Editor) translationPrompt(sourceText, targetLang string) string {
+	return fmt.Sprintf(
+		"Text requiring translation: %s, Translate the text to %s, apart from the translated text, nothing else is required of you.",
+		sourceText, targetLang)
+}
+
+func (e *Editor) llmQueryTranslate(instruction string) (string, error) {
+	defer func() {
+		e.selectAllBeforeLLM = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	}()
+
+	if strings.TrimSpace(e.llmProvider) == "" {
+		e.llmProvider = "ollama"
+	}
+	if strings.TrimSpace(e.llmModel) == "" {
+		e.llmModel = "gemma3:4b"
+	}
+
+	payload := instruction
+	e.statusMessage("Sending for translation to the LLM...")
+
+	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel, e.llmKey)
+	if err != nil {
+		return "", fmt.Errorf("LLM error: %w", err)
+	}
+
+	resp := string(out)
+	if strings.TrimSpace(resp) == "" {
+		return "", fmt.Errorf("LLM returned an empty response")
+	}
+	return resp, nil
+}
+
 // llmQuery sends a query to the LLM.
 // llmQuery отправляет запрос LLM.
 func (e *Editor) llmQuery(instruction string) {
-	e.llmLastPrompt = instruction
 	defer func() {
 		e.selectAllBeforeLLM = false
 		e.ctrlPState = false
@@ -2542,13 +2781,27 @@ func (e *Editor) insertLLMResponse(resp string) {
 	if len(respLines) == 0 {
 		return
 	}
+	if strings.TrimSpace(resp) == "" {
+		e.dirty = true
+		e.ensureVisible()
+		return
+	}
+	if e.cy < 0 {
+		e.cy = 0
+	}
+	for e.cy >= len(e.lines) {
+		e.lines = append(e.lines, "")
+	}
 	lineRunes := []rune(e.lines[e.cy])
 	if e.cx > len(lineRunes) {
 		e.cx = len(lineRunes)
 	}
 	left := string(lineRunes[:e.cx])
-	right := string(lineRunes[e.cx:])
-	e.lines[e.cy] = left + respLines[0]
+	right := ""
+	if e.cx < len(lineRunes) {
+		right = string(lineRunes[e.cx:])
+	}
+	e.lines[e.cy] = left + respLines[0] + right
 	insertIndex := e.cy + 1
 	for i := 1; i < len(respLines); i++ {
 		e.lines = append(e.lines[:insertIndex], append([]string{respLines[i]}, e.lines[insertIndex:]...)...)
@@ -2557,12 +2810,16 @@ func (e *Editor) insertLLMResponse(resp string) {
 	lastLineIndex := e.cy
 	if len(respLines) > 1 {
 		lastLineIndex = e.cy + len(respLines) - 1
-		e.lines[lastLineIndex] = e.lines[lastLineIndex] + right
-	} else {
-		e.lines[e.cy] = e.lines[e.cy] + right
+	}
+	if lastLineIndex >= len(e.lines) {
+		for lastLineIndex >= len(e.lines) {
+			e.lines = append(e.lines, "")
+		}
 	}
 	e.cy = lastLineIndex
-	e.cx = len([]rune(e.lines[e.cy]))
+	if e.cy >= 0 && e.cy < len(e.lines) {
+		e.cx = len([]rune(e.lines[e.cy]))
+	}
 	e.dirty = true
 	e.ensureVisible()
 }
