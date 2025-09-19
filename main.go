@@ -24,12 +24,13 @@ import (
 
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
+
 	"github.com/mattn/go-runewidth"
 )
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.7"
+const Version = "1.7.1"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -109,13 +110,24 @@ func printUsageExtended() {
 	}
 }
 
+// printUsageExtended prints the extended help information based on OS language
+func printUsageMini() {
+	lang := detectSystemLanguage()
+	switch lang {
+	case "ru":
+		printUsageRUMini()
+	default:
+		printUsageENMini()
+	}
+}
+
 // printUsageExtended prints the extended help information.
 // printUsageExtended выводит расширенную справку.
 func printUsageRU() {
 	fmt.Println("Editor - расширенная справка")
 	fmt.Println("Usage: editor  [provider]/[URL provider] [model] [path] [sn-...]")
 	fmt.Println()
-	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
+	fmt.Println("provider {default: ollama}, model {default: qwen3:1.7b}")
 	fmt.Println("Flags:")
 	fmt.Println("  -h, --help         Показать эту справку и использование.")
 	fmt.Println("  -v, --version      Показать версию программы.")
@@ -146,7 +158,10 @@ func printUsageRU() {
 	fmt.Println("  Ctrl-V  Вставить буфер обмена")
 	fmt.Println("  Ctrl-T  Терминал ОС (печать ответа в canvas)")
 	fmt.Println("  Ctrl-K  Выставить символ коментария для строки или выделеных строк,\n          убрать символ коментария")
-	fmt.Println("  Ctrl-I  Перевод строки или выделеного текста на требуемый язык.\n          После перевода осуществляется замена. По умолчанию, язык локали.")
+	fmt.Println("  Ctrl-W  Перевод строки или выделеного текста на требуемый иностранный язык.\n          После перевода осуществляется замена. По умолчанию, язык локали.")
+	fmt.Println("  Ctrl-Y  Сдвиг строк выделенного кода влево на 4 знака")
+	fmt.Println("  Ctrl-U  Сдвиг строк выделенного кода вправо на 4 знака")
+
 	fmt.Println("Навигация:")
 	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
 	fmt.Println()
@@ -163,7 +178,7 @@ func printUsageEN() {
 	fmt.Println("Editor - extended help")
 	fmt.Println("Usage: editor  [provider]/[URL provider] [model] [path] [sn-...]")
 	fmt.Println()
-	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
+	fmt.Println("provider {default: ollama}, model {default: qwen3:1.7b}")
 	fmt.Println("Flags:")
 	fmt.Println("  -h, --help         Show this help and usage.")
 	fmt.Println("  -v, --version      Show program version.")
@@ -193,7 +208,9 @@ func printUsageEN() {
 	fmt.Println("  Ctrl-V  Paste clipboard")
 	fmt.Println("  Ctrl-T  OS terminal (print LLM answer on canvas)")
 	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines,\n            remove the comment symbol.")
-	fmt.Println("  Ctrl-I  Line break or selected text into the required language.\n          After translation, replacement is carried out. By default, the locale language.")
+	fmt.Println("  Ctrl-Y  Shift the selected code lines to the left by 4 characters")
+	fmt.Println("  Ctrl-U  Shift the selected code lines to the right by 4 characters")
+	fmt.Println("  Ctrl-W  Translating a line or selected text into the required foreign language.\n          After translation, replacement is carried out. By default, the locale language.")
 	fmt.Println("Navigation:")
 	fmt.Println("  Arrows: cursor movement, Home/End, PgUp/PgDn — navigation in text")
 	fmt.Println()
@@ -206,6 +223,56 @@ func printUsageEN() {
 	fmt.Println("  editor file.txt")
 }
 
+func printUsageRUMini() {
+	fmt.Println("  ")
+	fmt.Println("     Ctrl-L  Отправить указание для LLM")
+	fmt.Println("     Ctrl-P  Генерирует код программы на основе описания (в виде коментария)")
+	fmt.Println("     Ctrl-R  Запускает код программы, при ошибке в коде - рекомендации по их исправлению")
+	fmt.Println("     Ctrl-S  Сохранить файл")
+	fmt.Println("     Ctrl-O  Открыть файл")
+	fmt.Println("     Ctrl-N  Новый файл")
+	fmt.Println("     Ctrl-Q  Выход из редактора")
+	fmt.Println("     Ctrl-F  Поиск текста. Для замены текста используй символ -> . Пример: Print -> Printf")
+	fmt.Println("     Ctrl-G  Перейти к строке")
+	fmt.Println("     Ctrl-Z  Отменить")
+	fmt.Println("     Ctrl-E  Вернуть отменённое")
+	fmt.Println("     Ctrl-X  Убрать текущую строку")
+	fmt.Println("     Ctrl-A  Выделить все")
+	fmt.Println("     Ctrl-B  Выделить по строчно (от курсора)")
+	fmt.Println("     Ctrl-C  Копировать в буфер обмена")
+	fmt.Println("     Ctrl-V  Вставить буфер обмена")
+	fmt.Println("     Ctrl-T  Терминал ОС (печать ответа в canvas)")
+	fmt.Println("     Ctrl-K  Выставить символ коментария для строки или выделеных строк, убрать символ коментария")
+	fmt.Println("     Ctrl-W  Перевод строки или выделеного текста на требуемый иностранный язык.")
+	fmt.Println("     Ctrl-Y  Сдвиг строк выделенного кода влево на 4 знака")
+	fmt.Println("     Ctrl-U  Сдвиг строк выделенного кода вправо на 4 знака")
+}
+
+func printUsageENMini() {
+	fmt.Println("   ")
+	fmt.Println("  Ctrl-L  Send the prompt to LLM")
+	fmt.Println("  Ctrl-P  Generates code from a description (as a comment)")
+	fmt.Println("  Ctrl-R  Run code, and on error - recommendations to fix")
+	fmt.Println("  Ctrl-S  Save file")
+	fmt.Println("  Ctrl-O  Open file")
+	fmt.Println("  Ctrl-N  New file")
+	fmt.Println("  Ctrl-Q  Quit editor")
+	fmt.Println("  Ctrl-F  Find text. To replace the text, use the symbol -> . Example: Print -> Printf.")
+	fmt.Println("  Ctrl-G  Go to line")
+	fmt.Println("  Ctrl-Z  Undo")
+	fmt.Println("  Ctrl-E  Redo")
+	fmt.Println("  Ctrl-X  Remove current line")
+	fmt.Println("  Ctrl-A  Select all")
+	fmt.Println("  Ctrl-B  Select by line (from cursor)")
+	fmt.Println("  Ctrl-C  Copy to clipboard")
+	fmt.Println("  Ctrl-V  Paste clipboard")
+	fmt.Println("  Ctrl-T  OS terminal (print LLM answer on canvas)")
+	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines, remove the comment symbol.")
+	fmt.Println("  Ctrl-Y  Shift the selected code lines to the left by 4 characters")
+	fmt.Println("  Ctrl-U  Shift the selected code lines to the right by 4 characters")
+	fmt.Println("  Ctrl-W  Translating a line or selected text into the required foreign language.")
+}
+
 // DisplayRow represents a line of text after wrapping.
 // DisplayRow представляет строку текста после переноса.
 type DisplayRow struct {
@@ -213,6 +280,13 @@ type DisplayRow struct {
 	segIndex  int
 	text      string
 	widths    []int
+}
+
+// EditorState представляет состояние редактора для undo/redo.
+type EditorState struct {
+	Lines []string // Состояние строк редактора
+	Cx    int      // Позиция курсора по X (столбец)
+	Cy    int      // Позиция курсора по Y (строка)
 }
 
 // Prompt represents a prompt for user input.
@@ -242,8 +316,6 @@ type Editor struct {
 	offsetY            int
 	dirty              bool
 	clipboard          string
-	undoStack          [][]string
-	redoStack          [][]string
 	prompt             *Prompt
 	multiLinePrompt    *MultiLinePrompt
 	quit               bool
@@ -269,6 +341,8 @@ type Editor struct {
 	errorShowTime      time.Time
 	lastSearch         string
 	llmPrefill         string
+	undoStack          []EditorState
+	redoStack          []EditorState
 }
 
 type TerminalPrompt struct {
@@ -619,6 +693,74 @@ func (e *Editor) insertTextAtCursor(text string) {
 	e.ensureVisible()
 }
 
+// indentSelection добавляет отступ (например, 4 пробела) в начало выделенных строк.
+// Если выделение построчное или символьное, применяется ко всем затронутым строкам.
+func (e *Editor) indentSelection() {
+	if !e.selecting {
+		return
+	}
+	e.pushUndo()
+	startLine, _, endLine, _ := e.getSelectionRange()
+	if startLine < 0 {
+		startLine = 0
+	}
+	if endLine >= len(e.lines) {
+		endLine = len(e.lines) - 1
+	}
+	if startLine > endLine {
+		startLine, endLine = endLine, startLine
+	}
+
+	indentText := "    "
+	for i := startLine; i <= endLine; i++ {
+		e.lines[i] = indentText + e.lines[i]
+	}
+
+	e.dirty = true
+}
+
+// unindentSelection удаляет отступ (например, 4 пробела или 1 таб) из начала выделенных строк.
+// Если выделение построчное или символьное, применяется ко всем затронутым строкам.
+func (e *Editor) unindentSelection() {
+	if !e.selecting {
+		return
+	}
+	e.pushUndo()
+
+	startLine, _, endLine, _ := e.getSelectionRange()
+	if startLine < 0 {
+		startLine = 0
+	}
+	if endLine >= len(e.lines) {
+		endLine = len(e.lines) - 1
+	}
+	if startLine > endLine {
+		startLine, endLine = endLine, startLine
+	}
+
+	const tabSize = 4
+	spaceIndent := strings.Repeat(" ", tabSize)
+
+	for i := startLine; i <= endLine; i++ {
+		line := e.lines[i]
+		if strings.HasPrefix(line, spaceIndent) {
+			e.lines[i] = line[tabSize:]
+		} else if strings.HasPrefix(line, "\t") {
+			e.lines[i] = line[1:]
+		} else if len(line) > 0 {
+			numSpaces := 0
+			for numSpaces < len(line) && line[numSpaces] == ' ' && numSpaces < tabSize {
+				numSpaces++
+			}
+			if numSpaces > 0 {
+				e.lines[i] = line[numSpaces:]
+			}
+		}
+	}
+
+	e.dirty = true
+}
+
 // deleteWordAfterCursor удаляет слово, которое начинается либо после курсора,
 // либо является словом, в котором находится курсор (если курсор внутри слова).
 func (e *Editor) deleteWordAfterCursor() {
@@ -681,6 +823,27 @@ func (e *Editor) deleteWordAfterCursor() {
 		e.dirty = true
 		e.ensureVisible()
 	}
+}
+
+// getUsageText возвращает текст расширенной справки в виде строки.
+// getUsageText returns the extended help text as a string.
+func (e *Editor) getUsageText() string {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	outCh := make(chan string)
+	go func() {
+		var b bytes.Buffer
+		io.Copy(&b, r)
+		outCh <- b.String()
+	}()
+
+	printUsageMini()
+	w.Close()
+	os.Stdout = oldStdout
+	usageText := <-outCh
+
+	return usageText
 }
 
 // highlightLine highlights a line of text based on the language.
@@ -1011,8 +1174,8 @@ func (e *Editor) render() {
 		}
 		wrappedLines := wrapText(promptText, wrapWidth)
 		numLinesToShow := len(wrappedLines)
-		if numLinesToShow > 20 {
-			numLinesToShow = 20
+		if numLinesToShow > 25 {
+			numLinesToShow = 25
 		}
 		startScreenRow := e.contentHeight - 2 - numLinesToShow
 		if startScreenRow < 1 {
@@ -1465,7 +1628,7 @@ func (e *Editor) statusBar() (string, string, string) {
 	}
 	top := string(lineRunes)
 	bottom2 := "^L Prompt    ^R Run code ^N New file ^O Open file ^S Save file ^Q Quit file ^F Find text ^G Go to line ^K Comment"
-	bottom1 := "^P Generates ^C Copy     ^V Insert   ^B Select    ^A All       ^X Remove    ^Z Cancel    ^E Return     ^T Terminal"
+	bottom1 := "^P Generates ^C Copy     ^V Insert   ^B Select    ^A All       ^X Remove    ^Z Cancel    ^E Return     ^J HELP"
 
 	return top, bottom1, bottom2
 }
@@ -1588,7 +1751,7 @@ func (e *Editor) llmQueryWithoutInsert(instruction string) (string, error) {
 		e.llmProvider = "ollama"
 	}
 	if strings.TrimSpace(e.llmModel) == "" {
-		e.llmModel = "gemma3:4b"
+		e.llmModel = "qwen3:1.7b"
 	}
 	e.statusMessage("Sending analysis request to LLM...")
 	out, err := SendMessageToLLM(instruction, e.llmProvider, e.llmModel, e.llmKey)
@@ -1744,8 +1907,13 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	}
 	shiftPressed := ev.Modifiers()&tcell.ModShift != 0
 
+	if ev.Rune() == '\t' || ev.Key() == tcell.KeyTab {
+		e.insertRune('\t')
+		return
+	}
+
 	switch ev.Key() {
-	case tcell.KeyCtrlI:
+	case tcell.KeyCtrlW:
 		selectedText := e.getSelectedText()
 		hasSelection := strings.TrimSpace(selectedText) != ""
 		var sourceText string
@@ -1815,6 +1983,18 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		}
 		e.ctrlAState = false
 		e.selectAllBeforeLLM = true
+	case tcell.KeyCtrlJ:
+		helpText := e.getUsageText()
+		e.multiLinePrompt = &MultiLinePrompt{
+			Label: "Help (Press Esc to close)",
+			Value: helpText,
+			Callback: func(input string) {
+				e.multiLinePrompt = nil
+				e.render()
+			},
+		}
+		e.prompt = nil
+		e.render()
 	case tcell.KeyCtrlK:
 		if e.selecting && e.lineSelecting {
 			e.toggleCommentSelection()
@@ -1843,6 +2023,16 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.selectAllBeforeLLM = true
 	case tcell.KeyCtrlS:
 		_ = e.save()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyCtrlU:
+		e.indentSelection()
+		e.ctrlAState = false
+		e.ctrlPState = false
+		e.ctrlLState = false
+	case tcell.KeyCtrlY:
+		e.unindentSelection()
 		e.ctrlAState = false
 		e.ctrlPState = false
 		e.ctrlLState = false
@@ -2271,8 +2461,8 @@ func (e *Editor) persist() error {
 	err := os.WriteFile(e.filename, []byte(content), 0644)
 	if err == nil {
 		e.dirty = false
-		e.undoStack = nil
-		e.redoStack = nil
+		// e.undoStack = nil
+		// e.redoStack = nil
 	}
 	return err
 }
@@ -2398,7 +2588,15 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 
 	switch ev.Key() {
 	case tcell.KeyEsc:
-		e.multiLinePrompt = nil
+		if e.multiLinePrompt != nil && e.multiLinePrompt.Label == "Help (Press Esc to close)" {
+			e.multiLinePrompt = nil
+			e.render()
+			return
+		} else if e.multiLinePrompt != nil {
+			e.multiLinePrompt = nil
+			e.render()
+			return
+		}
 	case tcell.KeyEnter:
 		e.multiLinePrompt.Value += "\n"
 	case tcell.KeyCtrlL:
@@ -2507,10 +2705,15 @@ func (e *Editor) statusMessage(msg string) {
 // pushUndo pushes the current state onto the undo stack.
 // pushUndo помещает текущее состояние в стек отмены.
 func (e *Editor) pushUndo() {
-	clone := make([]string, len(e.lines))
-	copy(clone, e.lines)
-	e.undoStack = append(e.undoStack, clone)
+	state := EditorState{
+		Lines: make([]string, len(e.lines)),
+		Cx:    e.cx,
+		Cy:    e.cy,
+	}
+	copy(state.Lines, e.lines)
+	e.undoStack = append(e.undoStack, state)
 	e.redoStack = nil
+	e.dirty = true
 }
 
 // scrollToLine прокручивает редактор так, чтобы указанная строка (lineIdx) была видна.
@@ -2572,35 +2775,20 @@ func (e *Editor) undo() {
 	if len(e.undoStack) == 0 {
 		return
 	}
-	savedCx := e.cx
-	savedCy := e.cy
-	current := make([]string, len(e.lines))
-	copy(current, e.lines)
-	e.redoStack = append(e.redoStack, current)
-	last := e.undoStack[len(e.undoStack)-1]
-	e.undoStack = e.undoStack[:len(e.undoStack)-1]
-	e.lines = last
-
-	if savedCy >= len(e.lines) {
-		e.cy = len(e.lines) - 1
-		if e.cy < 0 {
-			e.cy = 0
-			e.cx = 0
-		} else {
-			lineRunes := []rune(e.lines[e.cy])
-			e.cx = len(lineRunes)
-		}
-	} else {
-		e.cy = savedCy
-		lineRunes := []rune(e.lines[e.cy])
-		if savedCx > len(lineRunes) {
-			e.cx = len(lineRunes)
-		} else {
-			e.cx = savedCx
-		}
+	currentState := EditorState{
+		Lines: make([]string, len(e.lines)),
+		Cx:    e.cx,
+		Cy:    e.cy,
 	}
-	e.dirty = true
-	e.centerViewOnCursor()
+	copy(currentState.Lines, e.lines)
+	e.redoStack = append(e.redoStack, currentState)
+	lastState := e.undoStack[len(e.undoStack)-1]
+	e.undoStack = e.undoStack[:len(e.undoStack)-1]
+
+	e.lines = lastState.Lines
+	e.cx = lastState.Cx
+	e.cy = lastState.Cy
+	e.ensureVisible()
 }
 
 // redo reapplies the last undone change.
@@ -2609,35 +2797,19 @@ func (e *Editor) redo() {
 	if len(e.redoStack) == 0 {
 		return
 	}
-	savedCx := e.cx
-	savedCy := e.cy
-	current := make([]string, len(e.lines))
-	copy(current, e.lines)
-	e.undoStack = append(e.undoStack, current)
-	next := e.redoStack[len(e.redoStack)-1]
-	e.redoStack = e.redoStack[:len(e.redoStack)-1]
-	e.lines = next
-	if savedCy >= len(e.lines) {
-		e.cy = len(e.lines) - 1
-		if e.cy < 0 {
-			e.cy = 0
-			e.cx = 0
-		} else {
-			lineRunes := []rune(e.lines[e.cy])
-			e.cx = len(lineRunes)
-		}
-	} else {
-		e.cy = savedCy
-		lineRunes := []rune(e.lines[e.cy])
-		if savedCx > len(lineRunes) {
-			e.cx = len(lineRunes)
-		} else {
-			e.cx = savedCx
-		}
+	currentState := EditorState{
+		Lines: make([]string, len(e.lines)),
+		Cx:    e.cx,
+		Cy:    e.cy,
 	}
-	e.dirty = true
-	e.centerViewOnCursor()
-
+	copy(currentState.Lines, e.lines)
+	e.undoStack = append(e.undoStack, currentState)
+	nextState := e.redoStack[len(e.redoStack)-1]
+	e.redoStack = e.redoStack[:len(e.redoStack)-1]
+	e.lines = nextState.Lines
+	e.cx = nextState.Cx
+	e.cy = nextState.Cy
+	e.ensureVisible()
 }
 
 // cutLine cuts the current line and copies it to the clipboard.
