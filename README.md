@@ -7,7 +7,7 @@ https://golang.org/dl/)
 
 It is a text editor for working in the terminal, written in the Go language, using the tcell/v2 library for working with the terminal. It supports basic editing functions, syntax highlighting for multiple programming languages, and integration with LLM (Large Language Models).
 
-![Screenshot of the program](Editor_1.png)
+![Screenshot of the program](Editor_1_7_1.png)
 ## Features
 
 * **Text editing:** Multi-line editing, keyboard navigation (arrows, Home, End, PgUp, PgDn), insert, delete, create and open files.
@@ -78,7 +78,7 @@ If the file path is not specified in the flags, it can be passed as the first co
 
 ## Version
 
-Current version: 1.7.0
+Current version: 1.7.1
 
 ## Dependencies
 
@@ -177,7 +177,7 @@ See [CREDITS.md ](CREDITS.md ) — acknowledgements and information about addict
 
 ## Версия
 
-Текущая версия: 1.7.0
+Текущая версия: 1.7.1
 
 ## Зависимости
 
