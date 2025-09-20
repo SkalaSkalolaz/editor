@@ -30,7 +30,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.7.1"
+const Version = "1.7.2"
 
 // Language represents the programming language of the file.
 // Language представляет язык программирования файла.
@@ -941,6 +941,10 @@ func (e *Editor) showError(msg string) {
 	}()
 }
 
+func (e *Editor) isLLMModeActive() bool {
+    return e.multiLinePrompt != nil
+}
+
 // render renders the editor to the screen.
 // render отображает редактор на экране.
 func (e *Editor) render() {
@@ -948,6 +952,11 @@ func (e *Editor) render() {
 	display := e.buildDisplayBuffer()
 	total := len(display)
 	topLine, bottomLine1, bottomLine2 := e.statusBar()
+	if e.isLLMModeActive() {
+        bottomLine1 = ""
+        bottomLine2 = ""
+    }
+	
 	if e.terminalPrompt != nil {
 		user, err := user.Current()
 		username := "user"
@@ -1017,9 +1026,10 @@ func (e *Editor) render() {
 		originalLineText := e.lines[row.lineIndex]
 		tokens := e.highlightLine(originalLineText, row.lineIndex)
 		needHighlight := (row.lineIndex == e.cy)
-
-		styleSelection := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlue)
-		styleSelectionCurrentLine := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorNavy)
+		styleSelection := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorLightGray)
+		styleSelectionCurrentLine := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorLightGray)
+		// styleSelection := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorBlue)
+		// styleSelectionCurrentLine := tcell.StyleDefault.Foreground(tcell.ColorWhite).Background(tcell.ColorNavy)
 		xPos := 0
 		tokenStartRuneIdx := 0
 		for _, token := range tokens {
@@ -1057,7 +1067,7 @@ func (e *Editor) render() {
 			}
 
 			if needHighlight && !e.selecting {
-				style = style.Background(tcell.ColorBlue)
+				style = style.Background(tcell.ColorBlack)
 			}
 			segRunes := []rune(row.text)
 			for runeOffsetInToken := 0; runeOffsetInToken < tokenLenRunes; runeOffsetInToken++ {
@@ -1129,7 +1139,7 @@ func (e *Editor) render() {
 				}
 			}
 			if needHighlight && !e.selecting {
-				style = styleDefault.Background(tcell.ColorBlue)
+				style = styleDefault.Background(tcell.ColorBlack)
 			}
 			e.screen.SetContent(x, i+1, ' ', nil, style)
 		}
@@ -1157,7 +1167,8 @@ func (e *Editor) render() {
 				if cellOffset > 0 {
 					drawRune = ' '
 				}
-				e.screen.SetContent(xPos+cellOffset, promptLine, drawRune, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+				e.screen.SetContent(xPos+cellOffset, promptLine, drawRune, nil, tcell.StyleDefault.Background(tcell.NewRGBColor(211, 211, 211)).Foreground(tcell.ColorBlack))
+				// e.screen.SetContent(xPos+cellOffset, promptLine, drawRune, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 			}
 			xPos += rw
 		}
@@ -1195,6 +1206,7 @@ func (e *Editor) render() {
 				break
 			}
 			for x := 0; x < e.contentWidth; x++ {
+				// e.screen.SetContent(x, screenRow, ' ', nil, tcell.StyleDefault.Background(tcell.NewRGBColor(211, 211, 211)).Foreground(tcell.ColorBlack))
 				e.screen.SetContent(x, screenRow, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 			}
 		}
