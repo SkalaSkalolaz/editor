@@ -45,7 +45,7 @@ go run .
 
 If the path points to the project directory, the editor will automatically upload an overview of the files and create canvases for each source.
 
-#ATTENTION: 
+# ATTENTION: 
 		when connecting to your project, overwriting files on a local PC from the GitHub server deletes the data on the server. It is NECESSARY to resend all files to the server via Ctrl +P. When you open a project without overwriting it, the data remains on the server.
 
 ## Keyboard shortcuts
