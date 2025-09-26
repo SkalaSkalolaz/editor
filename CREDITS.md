@@ -1,0 +1,12 @@
+ - Library: gdamore/tcell/v2 (GitHub: https://github.com/gdamore/tcell)
+  - Author(s): gdamore
+  - License: [Apache License Version 2.0, January 2004]
+  - Usage: rendering text in the terminal, handling input and output on the screen.
+- Library: atotto/clipboard (GitHub: https://github.com/atotto/clipboard)
+  - Author: Ato Araki
+  - License: [BSD-3-Clause]
+  - Usage: working with the clipboard buffer.
+- Library: mattn/go-runewidth (GitHub: https://github.com/mattn/go-runewidth)
+  - Author: Yasuhiro Matsumoto
+  - License: [MIT]
+  - Usage: calculating the width of characters in terms of quotes, etc.
