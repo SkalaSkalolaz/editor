@@ -1,4 +1,6 @@
 package main
+// Где то здесь ошибка в коде, котрая становиться костылем и фишкой
+// Somewhere here there is a bug in the code that is turning into a crutch and a gimmick.
 
 import (
 	"archive/zip"
