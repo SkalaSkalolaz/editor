@@ -16,7 +16,7 @@ import (
 // Version of the editor.
 // Версия редактора.
 const Version = "0.9.10"
-
+// 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
