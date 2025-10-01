@@ -75,6 +75,7 @@ If the path points to the project directory, the editor will automatically uploa
 | Ctrl-Y | Indent selected lines to the left                                |
 | Ctrl-U | Indent selected lines to the right                               |
 | Ctrl-J | Help                                                             |
+| Ctrl-D | Line numbering													|
 | ←↑→↓, Home/End, PgUp/PgDn / Text navigation                               |
 
 ## Examples
