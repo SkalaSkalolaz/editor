@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)  
 [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
 
-Version: **0.9.10**
+Version: **0.9.11**
 ![Editor's screenshot](EditorGO_0_9_8.png)
 
 ## Project Description
@@ -87,6 +87,18 @@ If the path points to the project directory, the editor will automatically uploa
 ```
 ./editor pollinations qwen3:1.7b /path/to/file.go
 ```  
+- Processing LLM requests via standard streams
+```
+echo 'Analyze data' | ./editor -s --data  --input ./src ollama gemma3:4b"
+```
+- Text generation using an LLM based on the Openrouter provider with an access key
+```
+./editor openrouter deepseek/deepseek-chat-v3.1:free file.txt sn-...
+```
+- Work with code from a project that is located on the GitHub server
+```
+./editor pollinations qwen3:1.7b https://github.com/SkalaSkalolaz/editor ghp_
+``
 - Translation of the selected text (by default, into the system language):
 
   Ctrl-W → enter the language code → Enter
