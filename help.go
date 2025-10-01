@@ -32,8 +32,9 @@ func printUsageMini() {
 func printUsageRU() {
 	fmt.Println("Editor - расширенная справка")
 	fmt.Println("Usage: editor  [provider]/[URL provider] [model] [path]/[URL GitHub project] [sn-...] [ghp_]")
+	fmt.Println("       editor -s [provider]/[URL provider] [model] [sn-...]")
 	fmt.Println()
-	fmt.Println("provider {default: ollama}, model {default: qwen3:1.7b}")
+	fmt.Println("provider {default: ollama}, model {default: gemma3:4b}")
 	fmt.Println("Flags:")
 	fmt.Println("  -h, --help         Показать эту справку и использование.")
 	fmt.Println("  -v, --version      Показать версию программы.")
@@ -71,7 +72,13 @@ func printUsageRU() {
 	fmt.Println("Навигация:")
 	fmt.Println("  Стрелки: перемещение курсора, Home/End, PgUp/PgDn — навигация по тексту")
 	fmt.Println()
+	fmt.Println("Режим потока (stream mode):")
+	fmt.Println("  -s, --stream     Работа через стандартные потоки ввода-вывода")
+	fmt.Println("  -d, --data string    Данные из буфера обмена для потокового режима")
+	fmt.Println("  -i, --input string   Входной файл или директория для потокового режима")
+	fmt.Println()
 	fmt.Println("Примеры:")
+
 	fmt.Println("  editor pollinations openai /path/to/file.txt")
 	fmt.Println("  editor pollinations openai /path/to")
 	fmt.Println("  editor llm7 help")
@@ -79,6 +86,9 @@ func printUsageRU() {
 	fmt.Println("  editor https://openai.ai/api/v1/chat/completions gpt-4.1-nano file.txt sn-...")
 	fmt.Println("  editor openrouter deepseek/deepseek-r1:free file.txt sn-...")
 	fmt.Println("  editor file.txt")
+	fmt.Println("  echo 'Привет' | editor -s ollama gemma3:4b")
+	fmt.Println("  echo 'Анализ данных' | editor -s --data --input ./src ollama gemma3:4b")
+	fmt.Println("  echo 'Объясни код' | editor -s --input project/ ollama gemma3:4b")
 }
 
 func printUsageEN() {
@@ -122,7 +132,14 @@ func printUsageEN() {
 	fmt.Println("Navigation:")
 	fmt.Println("  Arrows: cursor movement, Home/End, PgUp/PgDn — navigation in text")
 	fmt.Println()
+	fmt.Println("Stream mode (stream mode):")
+	fmt.Println("  -s, --stream     Operate via standard input/output streams")
+	fmt.Println("  -d, --data string    Data from clipboard for stream mode")
+	fmt.Println("  -i, --input string   Input file or directory for stream mode")
+	fmt.Println()
+
 	fmt.Println("Examples:")
+
 	fmt.Println("  editor pollinations openai /path/to/file.txt")
 	fmt.Println("  editor pollinations openai /path/to")
 	fmt.Println("  editor llm7 help")
@@ -130,6 +147,9 @@ func printUsageEN() {
 	fmt.Println("  editor https://openai.ai/api/v1/chat/completions gpt-4.1-nano file.txt sn-...")
 	fmt.Println("  editor openrouter deepseek/deepseek-r1:free file.txt sn-...")
 	fmt.Println("  editor file.txt")
+	fmt.Println("  echo 'Hello' | editor -s ollama gemma3:4b")
+	fmt.Println("  echo 'Analyze data' | editor -s --data --input ./src ollama gemma3:4b")
+	fmt.Println("  echo 'Explain code' | editor -s --input project/ ollama gemma3:4b")
 }
 
 func printUsageRUMini() {
