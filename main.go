@@ -13,10 +13,10 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
-
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.11"
+const Version = "0.9.12"
+
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -62,6 +62,8 @@ type Editor struct {
 	currentCanvas      int
 	canvasWarningTime  time.Time
 	githubProject      *GitHubProject
+	showLineNumbers    bool
+	lineNumbersWidth   int
 }
 
 // ProjectContext представляет контекст всего проекта для отправки в LLM
