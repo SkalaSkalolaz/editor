@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
+
 
 // Style definitions for syntax highlighting.
 // Определения стилей для подсветки синтаксиса.
@@ -31,6 +31,11 @@ var (
 	styleFunction = tcell.StyleDefault.Foreground(tcell.ColorBlue).Background(tcell.ColorBlack)
 	styleOperator = tcell.StyleDefault.Foreground(tcell.ColorRed).Background(tcell.ColorBlack)
 	stylePreproc  = tcell.StyleDefault.Foreground(tcell.ColorPurple).Background(tcell.ColorBlack)
+)
+
+const (
+	LineNumbersMinWidth = 4
+	LineNumbersPadding  = 1
 )
 
 // DisplayRow represents a line of text after wrapping.
@@ -85,8 +90,8 @@ func getLineCommentPrefix(lang Language) (string, bool) {
 	}
 }
 
-// refreshSize updates the editor's dimensions.
-// refreshSize обновляет размеры редактора.
+// refreshSize updates the editor's dimensions with line numbers support.
+// refreshSize обновляет размеры редактора с поддержкой номеров строк.
 func (e *Editor) refreshSize() {
 	w, h := e.screen.Size()
 	if w <= 0 {
@@ -95,14 +100,29 @@ func (e *Editor) refreshSize() {
 	if h <= 0 {
 		h = 1
 	}
-	if w > 115 {
-		w = 115
+	if w > 150 {
+		w = 150
 	}
+
 	e.contentWidth = w
 	e.contentHeight = h
 	e.width = e.contentWidth
 	e.height = e.contentHeight
-	e.canvasWidth = e.contentWidth
+	if e.showLineNumbers {
+		maxLineNum := len(e.lines)
+		e.lineNumbersWidth = len(strconv.Itoa(maxLineNum)) + LineNumbersPadding
+		if e.lineNumbersWidth < LineNumbersMinWidth {
+			e.lineNumbersWidth = LineNumbersMinWidth
+		}
+		e.canvasWidth = e.contentWidth - e.lineNumbersWidth
+		if e.canvasWidth < 1 {
+			e.canvasWidth = 1
+		}
+	} else {
+		e.lineNumbersWidth = 0
+		e.canvasWidth = e.contentWidth
+	}
+
 	if e.height <= 0 {
 		e.height = 1
 	}
@@ -119,6 +139,10 @@ func (e *Editor) wrapLine(line string) []string {
 	var currentWidth int
 	var start int
 	tabWidth := 4
+	wrapWidth := e.canvasWidth
+	if wrapWidth <= 0 {
+		wrapWidth = 1
+	}
 
 	for i, r := range runes {
 		var rw int
@@ -127,10 +151,10 @@ func (e *Editor) wrapLine(line string) []string {
 		} else if unicode.IsSpace(r) {
 			rw = 1
 		} else {
-			rw = utf8.RuneLen(r)
+			rw = runewidth.RuneWidth(r)
 		}
 
-		if currentWidth+rw > e.contentWidth && i > start {
+		if currentWidth+rw > wrapWidth && i > start {
 			parts = append(parts, string(runes[start:i]))
 			start = i
 			currentWidth = rw
@@ -140,6 +164,58 @@ func (e *Editor) wrapLine(line string) []string {
 	}
 	parts = append(parts, string(runes[start:]))
 	return parts
+}
+
+// renderLineNumbers отображает номера строк слева от текста.
+// renderLineNumbers displays line numbers to the left of the text.
+func (e *Editor) renderLineNumbers(display []DisplayRow, contentRows int) {
+	if !e.showLineNumbers || e.lineNumbersWidth <= 0 {
+		return
+	}
+
+	for i := 0; i < contentRows; i++ {
+		di := e.offsetY + i
+		if di >= len(display) {
+			for x := 0; x < e.lineNumbersWidth; x++ {
+				e.screen.SetContent(x, i+1, ' ', nil,
+					tcell.StyleDefault.Background(tcell.ColorDarkBlue).Foreground(tcell.ColorGray))
+			}
+			continue
+		}
+
+		row := display[di]
+		lineNumber := row.lineIndex + 1
+		lineNumStyle := tcell.StyleDefault.
+			Background(tcell.ColorDarkBlue).
+			Foreground(tcell.ColorGray)
+
+		if row.lineIndex == e.cy {
+			lineNumStyle = lineNumStyle.
+				Background(tcell.ColorBlue).
+				Foreground(tcell.ColorWhite)
+		}
+
+		lineNumStr := strconv.Itoa(lineNumber)
+		padding := e.lineNumbersWidth - len(lineNumStr) - LineNumbersPadding
+
+		for x := 0; x < e.lineNumbersWidth; x++ {
+			e.screen.SetContent(x, i+1, ' ', nil, lineNumStyle)
+		}
+
+		xPos := padding
+		for _, r := range lineNumStr {
+			if xPos >= e.lineNumbersWidth {
+				break
+			}
+			e.screen.SetContent(xPos, i+1, r, nil, lineNumStyle)
+			xPos++
+		}
+
+		if e.lineNumbersWidth > 1 {
+			separatorX := e.lineNumbersWidth - 1
+			e.screen.SetContent(separatorX, i+1, '│', nil, lineNumStyle)
+		}
+	}
 }
 
 // buildDisplayBuffer builds the display buffer from the editor's lines.
@@ -245,6 +321,7 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 		}
 		segmentStartRune = segEndRune
 	}
+
 	displayRow := totalBefore + len(segs) - 1
 	lastSegRunes := []rune(segs[len(segs)-1])
 	offsetInSegCells := 0
@@ -255,6 +332,7 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 			offsetInSegCells += runewidth.RuneWidth(r)
 		}
 	}
+	offsetInSegCells += e.lineNumbersWidth
 	return displayRow, len(segs) - 1, offsetInSegCells
 }
 
@@ -780,6 +858,11 @@ func (e *Editor) statusBar() (string, string, string) {
 	canvasInfo := fmt.Sprintf(" [Canvas %d/%d]", e.currentCanvas, len(e.canvases))
 	left += canvasInfo
 
+	// if e.showLineNumbers {
+	// 	left += " [LN:ON]"
+	// } else {
+	// 	left += " [LN:OFF]"
+	// }
 	if e.githubProject != nil {
 		githubInfo := fmt.Sprintf(" [GitHub: %s/%s]", e.githubProject.Owner, e.githubProject.Repo)
 		left += githubInfo
@@ -1380,6 +1463,15 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	}
 
 	switch ev.Key() {
+	case tcell.KeyCtrlD:
+		e.showLineNumbers = !e.showLineNumbers
+		e.refreshSize()
+		if e.showLineNumbers {
+			e.statusMessage("Line numbers enabled")
+		} else {
+			e.statusMessage("Line numbers disabled")
+		}
+		return
 	case tcell.KeyCtrlN:
 		e.createNewCanvas()
 		e.ctrlAState = false
@@ -2091,6 +2183,8 @@ func (e *Editor) render() {
 		contentRows = 0
 	}
 
+	e.renderLineNumbers(display, contentRows)
+
 	var selStartLine, selStartCol, selEndLine, selEndCol int
 	if e.selecting {
 		selStartLine, selStartCol, selEndLine, selEndCol = e.getSelectionRange()
@@ -2101,7 +2195,7 @@ func (e *Editor) render() {
 	for i := 0; i < contentRows; i++ {
 		di := e.offsetY + i
 		if di >= total {
-			for x := 0; x < e.contentWidth; x++ {
+			for x := e.lineNumbersWidth; x < e.contentWidth; x++ {
 				e.screen.SetContent(x, i+1, ' ', nil, styleDefault)
 			}
 			continue
@@ -2112,8 +2206,10 @@ func (e *Editor) render() {
 		needHighlight := (row.lineIndex == e.cy)
 		styleSelection := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorLightGray)
 		styleSelectionCurrentLine := tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorLightGray)
-		xPos := 0
+
+		xPos := e.lineNumbersWidth
 		tokenStartRuneIdx := 0
+
 		for _, token := range tokens {
 			tokenRunes := []rune(token.Text)
 			tokenLenRunes := len(tokenRunes)
@@ -2151,6 +2247,7 @@ func (e *Editor) render() {
 			if needHighlight && !e.selecting {
 				style = style.Background(tcell.ColorBlack)
 			}
+
 			segRunes := []rune(row.text)
 			for runeOffsetInToken := 0; runeOffsetInToken < tokenLenRunes; runeOffsetInToken++ {
 				originalRuneIdx := tokenStartRuneIdx + runeOffsetInToken
@@ -2203,15 +2300,14 @@ func (e *Editor) render() {
 				break
 			}
 		}
+
 		for x := xPos; x < e.contentWidth; x++ {
 			style := styleDefault
 			if e.selecting && row.lineIndex >= selStartLine && row.lineIndex <= selEndLine {
 				lineSelStartCol := 0
-
 				if row.lineIndex == selStartLine {
 					lineSelStartCol = selStartCol
 				}
-
 				if xPos >= lineSelStartCol && (row.lineIndex < selEndLine || xPos < selEndCol) {
 					if needHighlight {
 						style = styleSelectionCurrentLine
