@@ -98,7 +98,7 @@ echo 'Analyze data' | ./editor -s --data  --input ./src ollama gemma3:4b"
 - Work with code from a project that is located on the GitHub server
 ```
 ./editor pollinations qwen3:1.7b https://github.com/SkalaSkalolaz/editor ghp_
-``
+```
 - Translation of the selected text (by default, into the system language):
 
   Ctrl-W → enter the language code → Enter
