@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -879,4 +880,87 @@ func (e *Editor) llmQueryWithProjectContext(instruction string) {
 	}
 	e.statusMessage("LLM response received successfully")
 	e.insertLLMResponse(resp)
+}
+
+// ProcessStreamingLLM обрабатывает LLM-запросы через стандартные потоки ввода-вывода
+func ProcessStreamingLLM(provider, model, apiKey string, useClipboardData bool, inputFiles string) error {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("error reading from stdin: %w", err)
+	}
+
+	instruction := strings.TrimSpace(string(input))
+	var clipboardData string
+	if useClipboardData {
+		clipboardData = getClipboardData()
+	}
+	fullPayload := processStreamInput(instruction, clipboardData, inputFiles)
+
+	if strings.TrimSpace(fullPayload) == "" {
+		return fmt.Errorf("empty input provided")
+	}
+	response, err := SendMessageToLLM(fullPayload, provider, model, apiKey)
+	if err != nil {
+		return fmt.Errorf("LLM request failed: %w", err)
+	}
+	fmt.Print(response)
+	return nil
+}
+
+// processStreamInput обрабатывает входные данные для потокового режима
+func processStreamInput(instruction, streamData, inputFiles string) string {
+	var payload strings.Builder
+	payload.WriteString(instruction)
+	payload.WriteString("\n\n")
+	if streamData != "" {
+		payload.WriteString("DATA FROM CLIPBOARD:\n")
+		payload.WriteString(streamData)
+		payload.WriteString("\n\n")
+	}
+	if inputFiles != "" {
+		files, err := readInputFiles(inputFiles)
+		if err == nil && len(files) > 0 {
+			payload.WriteString("INPUT FILES CONTENT:\n")
+			payload.WriteString("====================\n\n")
+
+			for filename, content := range files {
+				payload.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
+				payload.WriteString(content)
+				payload.WriteString("\n\n")
+			}
+		}
+	}
+
+	return payload.String()
+}
+
+// readInputFiles читает файлы из указанного пути (файл или директория)
+func readInputFiles(inputPath string) (map[string]string, error) {
+	files := make(map[string]string)
+
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if info.IsDir() {
+		return readProjectFiles(inputPath)
+	} else {
+		content, err := os.ReadFile(inputPath)
+		if err != nil {
+			return nil, err
+		}
+		files[filepath.Base(inputPath)] = string(content)
+	}
+
+	return files, nil
+}
+//
+// getClipboardData безопасно получает данные из буфера обмена
+func getClipboardData() string {
+	data, err := clipboard.ReadAll()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(data)
 }
