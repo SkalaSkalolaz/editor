@@ -67,6 +67,7 @@ func printUsageRU() {
 	fmt.Println("  Ctrl-W  Перевод строки или выделеного текста на требуемый иностранный язык.\n          После перевода осуществляется замена. По умолчанию, язык локали.")
 	fmt.Println("  Ctrl-Y  Сдвиг строк выделенного кода влево на 4 знака")
 	fmt.Println("  Ctrl-U  Сдвиг строк выделенного кода вправо на 4 знака")
+	fmt.Println("  Ctrl-D  Нумерация строк")
 	fmt.Println("  Ctrl-P  Отправка проекта на GitHub / Дополнительная клавиша для\n          отправки всех файлов проекта, как данных для LLM")
 
 	fmt.Println("Навигация:")
@@ -127,6 +128,7 @@ func printUsageEN() {
 	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines,\n            remove the comment symbol.")
 	fmt.Println("  Ctrl-Y  Shift the selected code lines to the left by 4 characters")
 	fmt.Println("  Ctrl-U  Shift the selected code lines to the right by 4 characters")
+	fmt.Println("  Ctrl-D  Line numbering")
 	fmt.Println("  Ctrl-W  Translating a line or selected text into the required foreign language.\n          After translation, replacement is carried out. By default, the locale language.")
 	fmt.Println("  Ctrl-P  Sending the project to GitHub / Additional key for\n            sending all project files as LLM data")
 	fmt.Println("Navigation:")
@@ -174,6 +176,7 @@ func printUsageRUMini() {
 	fmt.Println("     Ctrl-W  Перевод строки или выделеного текста на требуемый иностранный язык.")
 	fmt.Println("     Ctrl-Y  Сдвиг строк выделенного кода влево на 4 знака")
 	fmt.Println("     Ctrl-U  Сдвиг строк выделенного кода вправо на 4 знака")
+	fmt.Println("     Ctrl-D  Нумерация строк")
 	fmt.Println("     Ctrl-P  Отправка проекта на GitHub / Дополнительная клавиша для\n             отправки всех файлов проекта, как данных для LLM")
 }
 
@@ -198,6 +201,7 @@ func printUsageENMini() {
 	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines, remove the comment symbol.")
 	fmt.Println("  Ctrl-Y  Shift the selected code lines to the left by 4 characters")
 	fmt.Println("  Ctrl-U  Shift the selected code lines to the right by 4 characters")
+	fmt.Println("  Ctrl-D  Line numbering")
 	fmt.Println("  Ctrl-W  Translating a line or selected text into the required foreign language.")
 	fmt.Println("  Ctrl-P  Sending the project to GitHub / Additional key for\n               sending all project files as LLM data")
 }
