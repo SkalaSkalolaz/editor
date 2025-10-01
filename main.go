@@ -13,10 +13,11 @@ import (
 	"github.com/gdamore/tcell/v2"
 )
 
+
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.10"
-// 
+const Version = "0.9.11"
+
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
@@ -607,6 +608,7 @@ func main() {
 	path := ""
 	keyFromArg := ""
 	githubToken := ""
+
 	flag.StringVar(&path, "path", "", "path to file or directory")
 	flag.StringVar(&provider, "provider", provider, "LLMS provider")
 	flag.StringVar(&model, "model", model, "LLMS model")
@@ -615,8 +617,43 @@ func main() {
 	flag.BoolVar(&showVersion, "version", false, "Show version")
 	flag.BoolVar(&showVersion, "v", false, "Show version (short)")
 	flag.Usage = printUsageExtended
+	var streamMode bool
+	var useClipboardData bool
+	var inputFiles string
+	flag.BoolVar(&streamMode, "stream", false, "Stream mode: read from stdin, write to stdout")
+	flag.BoolVar(&streamMode, "s", false, "Stream mode (short)")
+	flag.BoolVar(&useClipboardData, "data", false, "Use clipboard data as input in stream mode")
+	flag.BoolVar(&useClipboardData, "d", false, "Use clipboard data as input in stream mode (short)")
+	flag.StringVar(&inputFiles, "input", "", "Use file or directory content as input in stream mode")
+	flag.StringVar(&inputFiles, "i", "", "Use file or directory content as input in stream mode (short)")
+
+	flag.Usage = printUsageExtended
 	flag.Parse()
 
+	if streamMode {
+		args := flag.Args()
+		if len(args) >= 2 {
+			provider = args[0]
+			model = args[1]
+			if len(args) >= 3 {
+				keyFromArg = args[2]
+			}
+		}
+
+		if provider == "" {
+			provider = "ollama"
+		}
+		if model == "" {
+			model = "gemma3:4b"
+		}
+
+		err := ProcessStreamingLLM(provider, model, keyFromArg, useClipboardData, inputFiles)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	args := flag.Args()
 	switch {
 	case len(args) >= 3:
