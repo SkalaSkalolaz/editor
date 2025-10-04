@@ -25,6 +25,7 @@ func (e *Editor) llmQuery(instruction string) {
 		e.selectAllBeforeLLM = false
 		e.ctrlLState = false
 	}()
+
 	if strings.TrimSpace(e.llmProvider) == "" {
 		e.llmProvider = "ollama"
 	}
@@ -33,12 +34,6 @@ func (e *Editor) llmQuery(instruction string) {
 	}
 
 	payload := instruction
-	if cb, err := clipboard.ReadAll(); err == nil {
-		cb = strings.TrimSpace(cb)
-		if cb != "" {
-			payload = payload + "\nData from clipboard:\n" + cb
-		}
-	}
 	if e.selectAllBeforeLLM {
 		allText := strings.Join(e.lines, "\n")
 		if strings.TrimSpace(allText) != "" {
@@ -46,21 +41,57 @@ func (e *Editor) llmQuery(instruction string) {
 		}
 	}
 
+	_ = e.sendPayloadToLLM(payload)
+}
+
+// llmQueryWithClipboard и явно добавляет содержимое буфера обмена (если оно не пустое).
+func (e *Editor) llmQueryWithClipboard(instruction string) {
+	defer func() {
+		e.selectAllBeforeLLM = false
+		e.ctrlLState = false
+	}()
+
+	if strings.TrimSpace(e.llmProvider) == "" {
+		e.llmProvider = "ollama"
+	}
+	if strings.TrimSpace(e.llmModel) == "" {
+		e.llmModel = "gemma3:4b"
+	}
+
+	payload := instruction
+	if cb := getClipboardData(); cb != "" {
+		payload = payload + "\nData from clipboard:\n" + cb
+	}
+
+	if e.selectAllBeforeLLM {
+		allText := strings.Join(e.lines, "\n")
+		if strings.TrimSpace(allText) != "" {
+			payload = payload + "\nExisting text:\n" + allText
+		}
+	}
+
+	_ = e.sendPayloadToLLM(payload)
+}
+
+// sendPayloadToLLM — helper: отправляет payload к LLM, обрабатывает ошибки и вставляет ответ.
+func (e *Editor) sendPayloadToLLM(payload string) error {
 	e.statusMessage("Sending request to LLM...")
 
 	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel, e.llmKey)
 	if err != nil {
 		e.showError("LLM error: " + err.Error())
-		return
+		return err
 	}
 
 	resp := string(out)
 	if strings.TrimSpace(resp) == "" {
 		e.showError("LLM returned an empty response")
-		return
+		return fmt.Errorf("empty LLM response")
 	}
+
 	e.statusMessage("LLM response received successfully")
 	e.insertLLMResponse(resp)
+	return nil
 }
 
 // sendCommentToLLM sends a comment to the LLM.
@@ -830,7 +861,8 @@ func nameModelOpenRouter() {
 	}
 }
 
-// llmQueryWithProjectContext отправляет запрос в LLM со всем контекстом проекта
+// llmQueryWithProjectContext — отправляет проектный контекст без добавления clipboard по умолчанию.
+// (Если нужно — можно вызвать llmQueryWithProjectContextIncludeClipboard ниже.)
 func (e *Editor) llmQueryWithProjectContext(instruction string) {
 	defer func() {
 		e.selectAllBeforeLLM = false
@@ -844,13 +876,12 @@ func (e *Editor) llmQueryWithProjectContext(instruction string) {
 		e.llmModel = "gemma3:4b"
 	}
 
-	// Убедимся, что все изменения синхронизированы перед сбором контекста
+	// Синхронизируем редактор → канвас перед сбором контекста
 	e.syncEditorToCanvas()
 
 	e.statusMessage("Building project context...")
 	projectContext := e.buildProjectContext(instruction)
 
-	// Проверим, что файлы действительно собраны
 	if len(projectContext.Files) == 0 {
 		e.showError("No project files found to send to LLM")
 		return
@@ -858,28 +889,7 @@ func (e *Editor) llmQueryWithProjectContext(instruction string) {
 
 	payload := e.formatProjectContextForLLM(projectContext)
 
-	if cb, err := clipboard.ReadAll(); err == nil {
-		cb = strings.TrimSpace(cb)
-		if cb != "" {
-			payload = payload + "\n\nAdditional data from clipboard:\n" + cb
-		}
-	}
-
-	e.statusMessage("Sending project context to LLM...")
-
-	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel, e.llmKey)
-	if err != nil {
-		e.showError("LLM error: " + err.Error())
-		return
-	}
-
-	resp := string(out)
-	if strings.TrimSpace(resp) == "" {
-		e.showError("LLM returned an empty response")
-		return
-	}
-	e.statusMessage("LLM response received successfully")
-	e.insertLLMResponse(resp)
+	_ = e.sendPayloadToLLM(payload)
 }
 
 // ProcessStreamingLLM обрабатывает LLM-запросы через стандартные потоки ввода-вывода
@@ -955,7 +965,7 @@ func readInputFiles(inputPath string) (map[string]string, error) {
 
 	return files, nil
 }
-//
+
 // getClipboardData безопасно получает данные из буфера обмена
 func getClipboardData() string {
 	data, err := clipboard.ReadAll()
