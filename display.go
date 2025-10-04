@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/user"
@@ -45,6 +46,11 @@ type DisplayRow struct {
 	segIndex  int
 	text      string
 	widths    []int
+}
+
+type panelCell struct {
+	Ch    rune
+	Style tcell.Style
 }
 
 // Prompt represents a prompt for user input.
@@ -108,26 +114,42 @@ func (e *Editor) refreshSize() {
 	e.contentHeight = h
 	e.width = e.contentWidth
 	e.height = e.contentHeight
+	if e.structurePanelWidth <= 0 {
+		e.structurePanelWidth = 4 //24
+	}
+	if e.structurePanelWidth > e.contentWidth/3 {
+		e.structurePanelWidth = e.contentWidth / 3
+	}
 	if e.showLineNumbers {
 		maxLineNum := len(e.lines)
 		e.lineNumbersWidth = len(strconv.Itoa(maxLineNum)) + LineNumbersPadding
 		if e.lineNumbersWidth < LineNumbersMinWidth {
 			e.lineNumbersWidth = LineNumbersMinWidth
 		}
-		e.canvasWidth = e.contentWidth - e.lineNumbersWidth
+	} else {
+		e.lineNumbersWidth = 0
+	}
+	canvasAvailable := e.contentWidth - e.lineNumbersWidth
+	if e.showStructurePanel {
+		if canvasAvailable-e.structurePanelWidth < 10 {
+			if canvasAvailable > 10 {
+				e.structurePanelWidth = canvasAvailable - 10
+			} else {
+				e.structurePanelWidth = 0
+			}
+		}
+		e.canvasWidth = canvasAvailable - e.structurePanelWidth
 		if e.canvasWidth < 1 {
 			e.canvasWidth = 1
 		}
 	} else {
-		e.lineNumbersWidth = 0
-		e.canvasWidth = e.contentWidth
+		e.canvasWidth = canvasAvailable
 	}
 
 	if e.height <= 0 {
 		e.height = 1
 	}
-	cursorRow, _, _ := e.cursorDisplayPosition()
-	_ = cursorRow
+	_, _, _ = e.cursorDisplayPosition()
 }
 
 func (e *Editor) wrapLine(line string) []string {
@@ -246,7 +268,7 @@ func (e *Editor) buildDisplayBuffer() []DisplayRow {
 
 func (e *Editor) llmPromptWithPrevShow() {
 	e.multiLinePrompt = &MultiLinePrompt{
-		Label: "Enter your prompt. /Ctrl+L to send, Ctrl+P to send with project context/",
+		Label: "Enter your prompt. /Ctrl+L to send, Ctrl+C to send together with the contents of the clipboard, Ctrl+P to send with project context/",
 		Value: e.llmPrefill,
 		Callback: func(input string) {
 			e.llmPrefill = input
@@ -1343,8 +1365,10 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 			e.render()
 			return
 		}
+
 	case tcell.KeyEnter:
 		e.multiLinePrompt.Value += "\n"
+
 	case tcell.KeyCtrlL:
 		if e.multiLinePrompt != nil {
 			if strings.TrimSpace(e.multiLinePrompt.Value) != "" {
@@ -1360,6 +1384,7 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 			}
 		}
 		e.ctrlLState = false
+
 	case tcell.KeyCtrlP:
 		if e.multiLinePrompt != nil && strings.TrimSpace(e.multiLinePrompt.Value) != "" {
 			instruction := e.multiLinePrompt.Value
@@ -1370,6 +1395,24 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 			e.saveToGitHub()
 		} else {
 			e.showError("Not a GitHub project. Open a GitHub URL to enable this feature.")
+		}
+
+	case tcell.KeyCtrlC:
+		if e.multiLinePrompt != nil {
+			if strings.TrimSpace(e.multiLinePrompt.Value) != "" {
+				instruction := e.multiLinePrompt.Value
+				e.multiLinePrompt = nil
+				if cb := getClipboardData(); cb != "" {
+					e.llmQueryWithClipboard(instruction)
+				} else {
+					e.llmQuery(instruction)
+				}
+
+				e.resetEditorStates()
+			} else {
+				e.multiLinePrompt = nil
+				e.resetEditorStates()
+			}
 		}
 	default:
 		if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
@@ -1465,12 +1508,24 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	switch ev.Key() {
 	case tcell.KeyCtrlD:
 		e.showLineNumbers = !e.showLineNumbers
-		e.refreshSize()
-		if e.showLineNumbers {
-			e.statusMessage("Line numbers enabled")
-		} else {
-			e.statusMessage("Line numbers disabled")
+		e.showStructurePanel = !e.showStructurePanel
+		if e.showStructurePanel && e.structurePanelWidth == 0 {
+			e.structurePanelWidth = 4 //24
 		}
+		e.refreshSize()
+
+		msgParts := []string{}
+		if e.showLineNumbers {
+			msgParts = append(msgParts, "Line numbers enabled")
+		} else {
+			msgParts = append(msgParts, "Line numbers disabled")
+		}
+		if e.showStructurePanel {
+			msgParts = append(msgParts, "Structure panel enabled")
+		} else {
+			msgParts = append(msgParts, "Structure panel disabled")
+		}
+		e.statusMessage(strings.Join(msgParts, " | "))
 		return
 	case tcell.KeyCtrlN:
 		e.createNewCanvas()
@@ -2582,6 +2637,7 @@ func (e *Editor) render() {
 			e.screen.SetContent(i, e.contentHeight-2, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 		}
 	}
+	e.drawStructurePanel(display, contentRows)
 	if !e.canvasWarningTime.IsZero() && time.Since(e.canvasWarningTime) < 3*time.Second {
 		warningMsg := "Maximum number of canvases: " + strconv.Itoa(MaxCanvases)
 		for i := 0; i < e.contentWidth; i++ {
@@ -2701,4 +2757,197 @@ func (e *Editor) getSelectionRange() (int, int, int, int) {
 	}
 
 	return startLine, startCol, endLine, endCol
+}
+
+// buildStructureForLine — строит упрощённое представление строки как срез panelCell длиной width.
+func (e *Editor) buildStructureForLine(lineIdx int, width int) []panelCell {
+	res := make([]panelCell, width)
+	if width <= 0 || lineIdx < 0 || lineIdx >= len(e.lines) {
+		for i := range res {
+			res[i] = panelCell{Ch: ' ', Style: styleDefault}
+		}
+		return res
+	}
+
+	line := e.lines[lineIdx]
+	tokens := e.highlightLine(line, lineIdx)
+	tokenChars := make([]int, 0, len(tokens))
+	tokenStyles := make([]tcell.Style, 0, len(tokens))
+	totalChars := 0
+	for _, tk := range tokens {
+		cnt := 0
+		for _, r := range tk.Text {
+			if r != ' ' && r != '\t' && r != '\r' && r != '\n' {
+				cnt++
+			}
+		}
+		tokenChars = append(tokenChars, cnt)
+		tokenStyles = append(tokenStyles, tk.Style)
+		totalChars += cnt
+	}
+
+	if totalChars == 0 {
+		for i := range res {
+			res[i] = panelCell{Ch: ' ', Style: styleDefault}
+		}
+		return res
+	}
+	cols := make([]int, len(tokenChars))
+	sumCols := 0
+	for i, c := range tokenChars {
+		if c == 0 {
+			cols[i] = 1
+		} else {
+			alloc := int(math.Round(float64(c) * float64(width) / float64(totalChars)))
+			if alloc < 1 {
+				alloc = 1
+			}
+			cols[i] = alloc
+		}
+		sumCols += cols[i]
+	}
+	for sumCols > width {
+		maxIdx := -1
+		maxVal := 0
+		for i, v := range cols {
+			if v > maxVal {
+				maxVal = v
+				maxIdx = i
+			}
+		}
+		if maxIdx == -1 {
+			break
+		}
+		cols[maxIdx]--
+		sumCols--
+	}
+	for sumCols < width {
+		maxIdx := -1
+		maxVal := -1
+		for i, v := range cols {
+			if v > maxVal {
+				maxVal = v
+				maxIdx = i
+			}
+		}
+		if maxIdx == -1 {
+			break
+		}
+		cols[maxIdx]++
+		sumCols++
+	}
+	pos := 0
+	for i, alloc := range cols {
+		style := tokenStyles[i]
+		ch := '.'
+		if tokenChars[i] == 0 {
+			for k := 0; k < alloc && pos < width; k++ {
+				res[pos] = panelCell{Ch: ' ', Style: styleDefault}
+				pos++
+			}
+			continue
+		}
+		for k := 0; k < alloc && pos < width; k++ {
+			res[pos] = panelCell{Ch: ch, Style: style}
+			pos++
+		}
+	}
+	for pos < width {
+		res[pos] = panelCell{Ch: ' ', Style: styleDefault}
+		pos++
+	}
+	return res
+}
+
+// drawStructurePanel — рисует правую панель как мини-карту всего буфера display.
+func (e *Editor) drawStructurePanel(display []DisplayRow, contentRows int) {
+	if !e.showStructurePanel || e.structurePanelWidth <= 0 {
+		return
+	}
+	panelStartX := e.contentWidth - e.structurePanelWidth
+	if panelStartX < 0 {
+		return
+	}
+	sepX := panelStartX - 1
+	if sepX >= 0 {
+		for y := 1; y <= contentRows; y++ {
+			e.screen.SetContent(sepX, y, '│', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
+		}
+	}
+
+	totalDisplay := len(display)
+	if totalDisplay == 0 {
+		for i := 0; i < contentRows; i++ {
+			for x := 0; x < e.structurePanelWidth; x++ {
+				e.screen.SetContent(panelStartX+x, i+1, ' ', nil, styleDefault)
+			}
+		}
+		return
+	}
+	curDisplayRow, _, _ := e.cursorDisplayPosition()
+	cursorPanelRow := int(math.Floor(float64(curDisplayRow) * float64(contentRows) / float64(totalDisplay)))
+	if cursorPanelRow < 0 {
+		cursorPanelRow = 0
+	}
+	if cursorPanelRow >= contentRows {
+		cursorPanelRow = contentRows - 1
+	}
+
+	viewportStart := e.offsetY
+	viewportEnd := e.offsetY + contentRows - 1
+	viewportPanelStart := int(math.Floor(float64(viewportStart) * float64(contentRows) / float64(totalDisplay)))
+	viewportPanelEnd := int(math.Floor(float64(viewportEnd) * float64(contentRows) / float64(totalDisplay)))
+	if viewportPanelStart < 0 {
+		viewportPanelStart = 0
+	}
+	if viewportPanelEnd >= contentRows {
+		viewportPanelEnd = contentRows - 1
+	}
+	if viewportPanelEnd < viewportPanelStart {
+		viewportPanelEnd = viewportPanelStart
+	}
+
+	for panelRow := 0; panelRow < contentRows; panelRow++ {
+		mappedDi := int(math.Floor(float64(panelRow) * float64(totalDisplay) / float64(contentRows)))
+		if mappedDi < 0 {
+			mappedDi = 0
+		}
+		if mappedDi >= totalDisplay {
+			mappedDi = totalDisplay - 1
+		}
+
+		lineIdx := display[mappedDi].lineIndex
+		cells := e.buildStructureForLine(lineIdx, e.structurePanelWidth)
+		invertCol := -1
+		if panelRow == cursorPanelRow {
+			if e.cy >= 0 && e.cy < len(e.lines) {
+				lineRunes := []rune(e.lines[e.cy])
+				totalChars := len(lineRunes)
+				if totalChars > 0 {
+					ratio := float64(e.cx) / float64(totalChars)
+					invertCol = int(math.Floor(ratio * float64(e.structurePanelWidth)))
+					if invertCol < 0 {
+						invertCol = 0
+					}
+					if invertCol >= e.structurePanelWidth {
+						invertCol = e.structurePanelWidth - 1
+					}
+				}
+			}
+		}
+		isInViewport := (panelRow >= viewportPanelStart && panelRow <= viewportPanelEnd)
+		for x := 0; x < e.structurePanelWidth; x++ {
+			ch := cells[x].Ch
+			st := cells[x].Style
+			if isInViewport {
+				st = st.Background(tcell.ColorDarkGray)
+			}
+			if x == invertCol && panelRow == cursorPanelRow {
+				inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+				e.screen.SetContent(panelStartX+x, panelRow+1, ch, nil, inv)
+			} else {
+				e.screen.SetContent(panelStartX+x, panelRow+1, ch, nil, st)
+			}
+		}
+	}
 }
