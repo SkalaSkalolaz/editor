@@ -1,5 +1,7 @@
 package main
 
+// go build -buildvcs=false -o editor .
+
 import (
 	"flag"
 	"fmt"
@@ -15,55 +17,56 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.12"
-
+const Version = "0.9.13"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
-	screen             tcell.Screen
-	filename           string
-	lines              []string
-	cx, cy             int
-	offsetX            int
-	offsetY            int
-	dirty              bool
-	clipboard          string
-	prompt             *Prompt
-	multiLinePrompt    *MultiLinePrompt
-	quit               bool
-	width, height      int
-	llmProvider        string
-	llmModel           string
-	llmKey             string
-	canvasWidth        int
-	contentWidth       int
-	contentHeight      int
-	language           Language
-	selectAllBeforeLLM bool
-	ctrlAState         bool
-	ctrlLState         bool
-	selectStartX       int
-	selectStartY       int
-	selecting          bool
-	lineSelecting      bool
-	terminalPrompt     *TerminalPrompt
-	llmLastPrompt      string
-	errorMessage       string
-	errorShowTime      time.Time
-	lastSearch         string
-	llmPrefill         string
-	undoStack          []EditorState
-	redoStack          []EditorState
-	bracketMatcher     *BracketMatcher
-	contextMode        bool
-	incompleteLine     bool
-	canvases           map[int]*Canvas
-	currentCanvas      int
-	canvasWarningTime  time.Time
-	githubProject      *GitHubProject
-	showLineNumbers    bool
-	lineNumbersWidth   int
+	screen              tcell.Screen
+	filename            string
+	lines               []string
+	cx, cy              int
+	offsetX             int
+	offsetY             int
+	dirty               bool
+	clipboard           string
+	prompt              *Prompt
+	multiLinePrompt     *MultiLinePrompt
+	quit                bool
+	width, height       int
+	llmProvider         string
+	llmModel            string
+	llmKey              string
+	canvasWidth         int
+	contentWidth        int
+	contentHeight       int
+	language            Language
+	selectAllBeforeLLM  bool
+	ctrlAState          bool
+	ctrlLState          bool
+	selectStartX        int
+	selectStartY        int
+	selecting           bool
+	lineSelecting       bool
+	terminalPrompt      *TerminalPrompt
+	llmLastPrompt       string
+	errorMessage        string
+	errorShowTime       time.Time
+	lastSearch          string
+	llmPrefill          string
+	undoStack           []EditorState
+	redoStack           []EditorState
+	bracketMatcher      *BracketMatcher
+	contextMode         bool
+	incompleteLine      bool
+	canvases            map[int]*Canvas
+	currentCanvas       int
+	canvasWarningTime   time.Time
+	githubProject       *GitHubProject
+	showLineNumbers     bool
+	lineNumbersWidth    int
+	showStructurePanel  bool
+	structurePanelWidth int
 }
 
 // ProjectContext представляет контекст всего проекта для отправки в LLM
