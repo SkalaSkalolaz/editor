@@ -4,7 +4,6 @@ import (
 	"fmt"
 )
 
-
 // printUsageExtended prints the extended help information based on OS language
 func printUsageExtended() {
 	lang := detectSystemLanguage()
@@ -15,6 +14,7 @@ func printUsageExtended() {
 		printUsageEN()
 	}
 }
+
 
 // printUsageExtended prints the extended help information based on OS language
 func printUsageMini() {
@@ -60,7 +60,7 @@ func printUsageRU() {
 	fmt.Println("  Ctrl-X  Убрать текущую строку")
 	fmt.Println("  Ctrl-A  Выделить все")
 	fmt.Println("  Ctrl-B  Сдвиг канваса (листание файлов)")
-	fmt.Println("  Ctrl-C  Копировать в буфер обмена")
+	fmt.Println("  Ctrl-C  Копировать в буфер обмена / Дополнительная клавиша для\n          отправки буфера обмена, как данных для LLM")
 	fmt.Println("  Ctrl-V  Вставить буфер обмена")
 	fmt.Println("  Ctrl-T  Терминал ОС (печать ответа в canvas)")
 	fmt.Println("  Ctrl-K  Выставить символ коментария для строки или выделеных строк,\n          убрать символ коментария")
@@ -122,7 +122,7 @@ func printUsageEN() {
 	fmt.Println("  Ctrl-X  Remove current line")
 	fmt.Println("  Ctrl-A  Select all")
 	fmt.Println("  Ctrl-B  Shift of the canvas (scrolling files)")
-	fmt.Println("  Ctrl-C  Copy to clipboard")
+	fmt.Println("  Ctrl-C  Copy to clipboard / An extra key for sending\n            the clipboard contents as data to the LLM")
 	fmt.Println("  Ctrl-V  Paste clipboard")
 	fmt.Println("  Ctrl-T  OS terminal (print LLM answer on canvas)")
 	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines,\n            remove the comment symbol.")
@@ -169,7 +169,7 @@ func printUsageRUMini() {
 	fmt.Println("     Ctrl-X  Убрать текущую строку")
 	fmt.Println("     Ctrl-A  Выделить все")
 	fmt.Println("     Ctrl-B  Сдвиг канваса (листание файлов)")
-	fmt.Println("     Ctrl-C  Копировать в буфер обмена")
+	fmt.Println("     Ctrl-C  Копировать в буфер обмена / Дополнительная клавиша для\n          отправки буфера обмена, как данных для LLM")
 	fmt.Println("     Ctrl-V  Вставить буфер обмена")
 	fmt.Println("     Ctrl-T  Терминал ОС (печать ответа в canvas)")
 	fmt.Println("     Ctrl-K  Выставить символ коментария для строки или выделеных строк, убрать символ коментария")
@@ -195,7 +195,7 @@ func printUsageENMini() {
 	fmt.Println("  Ctrl-X  Remove current line")
 	fmt.Println("  Ctrl-A  Select all")
 	fmt.Println("  Ctrl-B  Select by line (from cursor)")
-	fmt.Println("  Ctrl-C  Copy to clipboard")
+	fmt.Println("  Ctrl-C  Copy to clipboard / An extra key for sending\n            the clipboard contents as data to the LLM")
 	fmt.Println("  Ctrl-V  Paste clipboard")
 	fmt.Println("  Ctrl-T  OS terminal (print LLM answer on canvas)")
 	fmt.Println("  Ctrl-K  Set a comment symbol for the line or selected lines, remove the comment symbol.")
