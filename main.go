@@ -15,55 +15,56 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.12"
-
+const Version = "0.9.14"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
 type Editor struct {
-	screen             tcell.Screen
-	filename           string
-	lines              []string
-	cx, cy             int
-	offsetX            int
-	offsetY            int
-	dirty              bool
-	clipboard          string
-	prompt             *Prompt
-	multiLinePrompt    *MultiLinePrompt
-	quit               bool
-	width, height      int
-	llmProvider        string
-	llmModel           string
-	llmKey             string
-	canvasWidth        int
-	contentWidth       int
-	contentHeight      int
-	language           Language
-	selectAllBeforeLLM bool
-	ctrlAState         bool
-	ctrlLState         bool
-	selectStartX       int
-	selectStartY       int
-	selecting          bool
-	lineSelecting      bool
-	terminalPrompt     *TerminalPrompt
-	llmLastPrompt      string
-	errorMessage       string
-	errorShowTime      time.Time
-	lastSearch         string
-	llmPrefill         string
-	undoStack          []EditorState
-	redoStack          []EditorState
-	bracketMatcher     *BracketMatcher
-	contextMode        bool
-	incompleteLine     bool
-	canvases           map[int]*Canvas
-	currentCanvas      int
-	canvasWarningTime  time.Time
-	githubProject      *GitHubProject
-	showLineNumbers    bool
-	lineNumbersWidth   int
+	screen              tcell.Screen
+	filename            string
+	lines               []string
+	cx, cy              int
+	offsetX             int
+	offsetY             int
+	dirty               bool
+	clipboard           string
+	prompt              *Prompt
+	multiLinePrompt     *MultiLinePrompt
+	quit                bool
+	width, height       int
+	llmProvider         string
+	llmModel            string
+	llmKey              string
+	canvasWidth         int
+	contentWidth        int
+	contentHeight       int
+	language            Language
+	selectAllBeforeLLM  bool
+	ctrlAState          bool
+	ctrlLState          bool
+	selectStartX        int
+	selectStartY        int
+	selecting           bool
+	lineSelecting       bool
+	terminalPrompt      *TerminalPrompt
+	llmLastPrompt       string
+	errorMessage        string
+	errorShowTime       time.Time
+	lastSearch          string
+	llmPrefill          string
+	undoStack           []EditorState
+	redoStack           []EditorState
+	bracketMatcher      *BracketMatcher
+	contextMode         bool
+	incompleteLine      bool
+	canvases            map[int]*Canvas
+	currentCanvas       int
+	canvasWarningTime   time.Time
+	githubProject       *GitHubProject
+	showLineNumbers     bool
+	lineNumbersWidth    int
+	showStructurePanel  bool
+	structurePanelWidth int
 }
 
 // ProjectContext представляет контекст всего проекта для отправки в LLM
@@ -101,6 +102,8 @@ func detectLanguage(filename string) Language {
 		return LangHTML
 	case ".lisp", ".lsp", ".cl", ".el":
 		return LangLisp
+	case ".uml":
+	    return LangPlantUML
 	default:
 		return LangUnknown
 	}
@@ -169,12 +172,12 @@ func NewEditor(path string, provider string, model string) *Editor {
 	return e
 }
 
+
 // readProjectFiles reads all supported files from a directory
 // readProjectFiles читает все поддерживаемые файлы из директории
 func readProjectFiles(dirPath string) (map[string]string, error) {
 	files := make(map[string]string)
 
-	// Supported file extensions for programming languages
 	supportedExts := map[string]bool{
 		".c": true, ".h": true,
 		".cpp": true, ".cc": true, ".cxx": true, ".hpp": true, ".hh": true,
@@ -187,6 +190,7 @@ func readProjectFiles(dirPath string) (map[string]string, error) {
 		".swift": true,
 		".html":  true, ".htm": true,
 		".lisp": true, ".lsp": true, ".cl": true, ".el": true,
+		".uml": true, ".png": true,
 	}
 
 	projectFiles := map[string]bool{
@@ -194,7 +198,7 @@ func readProjectFiles(dirPath string) (map[string]string, error) {
 		"LICENSE": true, "LICENSE.txt": true, "COPYING": true,
 		"CREDITS.md": true, "CREDITS": true, "CREDITS.txt": true,
 		"Makefile": true, "makefile": true,
-		"Dockerfile": true,
+		"Dockerfile": true, 
 		".gitignore": true,
 		"go.mod":     true, "go.sum": true,
 		"package.json": true, "package-lock.json": true,
@@ -346,7 +350,8 @@ func createProjectOverview(files map[string]string) []string {
 			strings.Contains(lowerName, "makefile") || strings.Contains(lowerName, "docker"):
 			configFiles = append(configFiles, filename)
 		case strings.Contains(lowerName, "readme") || strings.Contains(lowerName, "license") ||
-			strings.Contains(lowerName, "copying"):
+			strings.Contains(lowerName, "copying") || strings.Contains(lowerName, "credits") || 
+			strings.Contains(lowerName, "project"):
 			docFiles = append(docFiles, filename)
 		default:
 			configFiles = append(configFiles, filename)
