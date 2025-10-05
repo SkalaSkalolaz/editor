@@ -20,6 +20,8 @@ func (e *Editor) highlightLine(line string, lineIndex int) []HighlightedToken {
 		return []HighlightedToken{{Text: line, Style: styleDefault}}
 	}
 	switch e.language {
+	case LangPlantUML:
+	    return highlightPlantUML(line)
 	case LangC:
 		return highlightC(line)
 	case LangCpp:
@@ -63,6 +65,38 @@ func isDigit(c byte) bool {
 // isOperator проверяет, является ли байт оператором.
 func isOperator(c byte) bool {
 	return strings.Contains("+-*/%=<>!&|^~", string(c))
+}
+
+// highlightPlantUML подсвечивает код PlantUML
+func highlightPlantUML(line string) []HighlightedToken {
+	var tokens []HighlightedToken
+	keywords := map[string]bool{
+		"@startuml": true, "@enduml": true, "actor": true, "usecase": true,
+		"class": true, "interface": true, "enum": true, "package": true,
+		"note": true, "as": true, "extends": true, "implements": true,
+		"left": true, "right": true, "up": true, "down": true, "skinparam": true,
+		"title": true, "participant": true, "activate": true, "deactivate": true,
+		"autonumber": true, "return": true, "group": true, "end": true,
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(line), "'") {
+		return []HighlightedToken{{Text: line, Style: styleComment}}
+	}
+
+	parts := strings.Fields(line)
+	for _, word := range parts {
+		switch {
+		case keywords[word]:
+			tokens = append(tokens, HighlightedToken{Text: word + " ", Style: styleKeyword})
+		case strings.HasPrefix(word, "'"):
+			tokens = append(tokens, HighlightedToken{Text: word + " ", Style: styleComment})
+		case strings.HasPrefix(word, "\"") && strings.HasSuffix(word, "\""):
+			tokens = append(tokens, HighlightedToken{Text: word + " ", Style: styleString})
+		default:
+			tokens = append(tokens, HighlightedToken{Text: word + " ", Style: styleDefault})
+		}
+	}
+	return tokens
 }
 
 // highlightC highlights C code.
