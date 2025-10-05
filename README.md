@@ -3,8 +3,8 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)  
 [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
 
-Version: **0.9.11**
-![Editor's screenshot](EditorGO_0_9_8.png)
+Version: **0.9.14**
+![Editor's screenshot](project.png)
 
 ## Project Description
 
@@ -13,7 +13,7 @@ easy-to-use navigation, editing commands, and built-in integration with LLM (Lar
 
 ## Key features
 
-- Multi-language syntax highlighting and auto-detection: C, C++, Assembler, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp, etc.
+- Multi-language syntax highlighting and auto-detection: C, C++, Assembler, Fortran, Go, Python, Ruby, Kotlin, Swift, HTML, Lisp, PlantUML, etc.
 - Integration with LLM providers: Pollinations, OpenRouter, Ollama, LLM7, as well as any API URL.
 - Auto-completion of keywords and identifiers, auto-closing of brackets.
 - Built-in terminal (Ctrl-T) for executing OS commands and inserting output into the editor.
