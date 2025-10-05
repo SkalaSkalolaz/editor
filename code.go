@@ -29,6 +29,7 @@ const (
 	LangSwift    Language = "swift"
 	LangHTML     Language = "html"
 	LangLisp     Language = "lisp"
+	LangPlantUML Language = "plantuml"
 	LangUnknown  Language = "unknown"
 )
 
@@ -45,10 +46,19 @@ var languageTerminators = map[Language]string{
 	LangSwift:    "",
 	LangHTML:     "",
 	LangLisp:     "",
+	LangPlantUML: "",
 }
 
 // Keywords for each language
 var languageKeywords = map[Language]map[string]bool{
+	LangPlantUML: map[string]bool{
+        "@startuml": true, "@enduml": true, "actor": true, "usecase": true,
+        "class": true, "interface": true, "enum": true, "package": true,
+        "note": true, "as": true, "extends": true, "implements": true,
+        "left": true, "right": true, "up": true, "down": true, "skinparam": true,
+        "title": true, "participant": true, "activate": true, "deactivate": true,
+        "autonumber": true, "return": true, "group": true, "end": true,
+    },
 	LangC: map[string]bool{
 		"auto": true, "break": true, "case": true, "char": true, "const": true,
 		"continue": true, "default": true, "do": true, "double": true, "else": true,
@@ -672,6 +682,8 @@ func (e *Editor) runCodeInternally(code string, lang string, flags string, runAr
 	}
 
 	switch l {
+	case "plantuml", "uml":
+		return runUmlInternal(code, flags, runArgs)
 	case "cpp", "c++":
 		return runCppInternal(code, flags, runArgs)
 	case "c":
@@ -778,6 +790,44 @@ func (e *Editor) handleRunCode() {
 		e.insertLLMResponse("\n\n// No errors were detected in the code. \n// Execution result.\n" + stdout)
 		e.statusMessage("Code executed successfully")
 	}
+}
+
+func runUmlInternal(code string, compileFlags string, runArgs string) (string, string, error) {
+	tmp, err := ioutil.TempFile("", "runner_*.uml")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", "", err
+	}
+	tmp.Close()
+
+	outputFormat := "png"
+	args := []string{"-jar", "plantuml.jar", "-t" + outputFormat, tmp.Name()}
+
+	if strings.TrimSpace(runArgs) != "" {
+		args = append(args, splitArgs(runArgs)...)
+	}
+
+	cmd := exec.Command("java", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+
+	outFile := strings.TrimSuffix(tmp.Name(), ".uml") + "." + outputFormat
+
+	if _, statErr := os.Stat(outFile); statErr == nil {
+		stdout.WriteString(fmt.Sprintf("\nGenerated diagram: %s\n", outFile))
+	} else if err == nil {
+		err = fmt.Errorf("PlantUML did not produce output file")
+	}
+
+	return stdout.String(), stderr.String(), err
 }
 
 // New internal helpers: per-language implementations that compile/run locally
