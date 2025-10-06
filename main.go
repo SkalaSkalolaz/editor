@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.14"
+const Version = "0.9.15"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -65,6 +65,8 @@ type Editor struct {
 	lineNumbersWidth    int
 	showStructurePanel  bool
 	structurePanelWidth int
+	searchState      *SearchState
+    lastSearchPattern string
 }
 
 // ProjectContext представляет контекст всего проекта для отправки в LLM
@@ -73,6 +75,21 @@ type ProjectContext struct {
 	Files            map[string]string `json:"files"`
 	CurrentFile      string            `json:"current_file"`
 	Instruction      string            `json:"instruction"`
+}
+
+type SearchState struct {
+    pattern          string
+    matches          []MatchPosition
+    currentMatch     int
+    active           bool
+    projectMatches   map[string]int
+}
+
+type MatchPosition struct {
+    line    int
+    start   int
+    end     int
+    canvas  int
 }
 
 // detectLanguage detects the language based on the file extension.
@@ -169,6 +186,9 @@ func NewEditor(path string, provider string, model string) *Editor {
 	e.cx, e.cy = 0, 0
 	e.offsetX, e.offsetY = 0, 0
 	e.bracketMatcher = NewBracketMatcher(e)
+	e.searchState = &SearchState{
+ 	   projectMatches: make(map[string]int),
+	}
 	return e
 }
 
