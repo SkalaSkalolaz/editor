@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"os/user"
@@ -17,7 +18,6 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/mattn/go-runewidth"
 )
-
 
 // Style definitions for syntax highlighting.
 // Определения стилей для подсветки синтаксиса.
@@ -45,6 +45,11 @@ type DisplayRow struct {
 	segIndex  int
 	text      string
 	widths    []int
+}
+
+type panelCell struct {
+	Ch    rune
+	Style tcell.Style
 }
 
 // Prompt represents a prompt for user input.
@@ -108,26 +113,42 @@ func (e *Editor) refreshSize() {
 	e.contentHeight = h
 	e.width = e.contentWidth
 	e.height = e.contentHeight
+	if e.structurePanelWidth <= 0 {
+		e.structurePanelWidth = 4 //24
+	}
+	if e.structurePanelWidth > e.contentWidth/3 {
+		e.structurePanelWidth = e.contentWidth / 3
+	}
 	if e.showLineNumbers {
 		maxLineNum := len(e.lines)
 		e.lineNumbersWidth = len(strconv.Itoa(maxLineNum)) + LineNumbersPadding
 		if e.lineNumbersWidth < LineNumbersMinWidth {
 			e.lineNumbersWidth = LineNumbersMinWidth
 		}
-		e.canvasWidth = e.contentWidth - e.lineNumbersWidth
+	} else {
+		e.lineNumbersWidth = 0
+	}
+	canvasAvailable := e.contentWidth - e.lineNumbersWidth
+	if e.showStructurePanel {
+		if canvasAvailable-e.structurePanelWidth < 10 {
+			if canvasAvailable > 10 {
+				e.structurePanelWidth = canvasAvailable - 10
+			} else {
+				e.structurePanelWidth = 0
+			}
+		}
+		e.canvasWidth = canvasAvailable - e.structurePanelWidth
 		if e.canvasWidth < 1 {
 			e.canvasWidth = 1
 		}
 	} else {
-		e.lineNumbersWidth = 0
-		e.canvasWidth = e.contentWidth
+		e.canvasWidth = canvasAvailable
 	}
 
 	if e.height <= 0 {
 		e.height = 1
 	}
-	cursorRow, _, _ := e.cursorDisplayPosition()
-	_ = cursorRow
+	_, _, _ = e.cursorDisplayPosition()
 }
 
 func (e *Editor) wrapLine(line string) []string {
@@ -246,7 +267,7 @@ func (e *Editor) buildDisplayBuffer() []DisplayRow {
 
 func (e *Editor) llmPromptWithPrevShow() {
 	e.multiLinePrompt = &MultiLinePrompt{
-		Label: "Enter your prompt. /Ctrl+L to send, Ctrl+P to send with project context/",
+		Label: "Enter your prompt. /Ctrl+L to send, Ctrl+C to send together with the contents of the clipboard, Ctrl+P to send with project context/",
 		Value: e.llmPrefill,
 		Callback: func(input string) {
 			e.llmPrefill = input
@@ -851,79 +872,152 @@ func (em *ExitManager) cancelExit() {
 	em.editor.statusMessage("Exit cancelled")
 }
 
+
 // statusBar generates the top and bottom status bar text.
 // statusBar генерирует текст верхней и нижней строки состояния.
 func (e *Editor) statusBar() (string, string, string) {
-	left := "EDITOR " + Version
-	canvasInfo := fmt.Sprintf(" [Canvas %d/%d]", e.currentCanvas, len(e.canvases))
-	left += canvasInfo
+    left := "EDITOR " + Version
+    canvasInfo := fmt.Sprintf(" [Canvas %d/%d]", e.currentCanvas, len(e.canvases))
+    if e.searchState != nil && e.searchState.active && len(e.searchState.projectMatches) > 0 {
+        filesWithMatches := len(e.searchState.projectMatches)
+        canvasInfo += fmt.Sprintf(" [F:%d]", filesWithMatches)
+    }
+    
+    left += canvasInfo
 
-	// if e.showLineNumbers {
-	// 	left += " [LN:ON]"
-	// } else {
-	// 	left += " [LN:OFF]"
-	// }
-	if e.githubProject != nil {
-		githubInfo := fmt.Sprintf(" [GitHub: %s/%s]", e.githubProject.Owner, e.githubProject.Repo)
-		left += githubInfo
-	}
+    if e.githubProject != nil {
+        githubInfo := fmt.Sprintf(" [GitHub: %s/%s]", e.githubProject.Owner, e.githubProject.Repo)
+        left += githubInfo
+    }
 
-	name := e.filename
-	if name == "" {
-		name = "[new file]"
-	}
-	langInfo := ""
-	if e.language != LangUnknown {
-		langInfo = " [" + string(e.language) + "]"
-	}
-	totalLines := len(e.lines)
+    name := e.filename
+    if name == "" {
+        name = "[new file]"
+    }
+    langInfo := ""
+    if e.language != LangUnknown {
+        langInfo = " [" + string(e.language) + "]"
+    }
+    totalLines := len(e.lines)
 
-	selectedTokens := 0
-	if e.selecting {
-		selectedTokens = e.countSelectedTokens()
-	}
-	center := fmt.Sprintf("%s%s  Ln %d/%d, Col %d%s", name, langInfo, e.cy+1, totalLines, e.cx+1)
-	if selectedTokens > 0 {
-		center = fmt.Sprintf("%s%s  Ln %d/%d, Col %d Toc %d", name, langInfo, e.cy+1, totalLines, e.cx+1,
-			selectedTokens)
-	} else {
-		center = fmt.Sprintf("%s%s  Ln %d/%d, Col %d", name, langInfo, e.cy+1, totalLines, e.cx+1)
-	}
-	lineRunes := make([]rune, e.contentWidth)
-	for i := range lineRunes {
-		lineRunes[i] = ' '
-	}
-	leftRunes := []rune(left)
-	for i, r := range leftRunes {
-		if i >= e.contentWidth {
-			break
-		}
-		lineRunes[i] = r
-	}
-	leftLen := len(leftRunes)
-	rem := e.contentWidth - leftLen
-	if rem < 0 {
-		rem = 0
-	}
-	centerRunes := []rune(center)
-	centerPos := leftLen + (rem-len(centerRunes))/2
-	if centerPos < leftLen {
-		centerPos = leftLen
-	}
-	for i, r := range centerRunes {
-		pos := centerPos + i
-		if pos >= e.contentWidth {
-			break
-		}
-		lineRunes[pos] = r
-	}
-	top := string(lineRunes)
+    selectedTokens := 0
+    if e.selecting {
+        selectedTokens = e.countSelectedTokens()
+    }
+    center := fmt.Sprintf("%s%s  Ln %d/%d, Col %d%s", name, langInfo, e.cy+1, totalLines, e.cx+1)
+    if selectedTokens > 0 {
+        center = fmt.Sprintf("%s%s  Ln %d/%d, Col %d Toc %d", name, langInfo, e.cy+1, totalLines, e.cx+1,
+            selectedTokens)
+    } else {
+        center = fmt.Sprintf("%s%s  Ln %d/%d, Col %d", name, langInfo, e.cy+1, totalLines, e.cx+1)
+    }
+    
+    bottom2 := "^L Prompt    ^R Run code ^N New file ^O Open file ^S Save file ^Q Quit file ^F Find text ^G Go to line ^P Push Git"
+    bottom1 := "^J HELP      ^C Copy     ^V Insert   ^B Next      ^A All       ^X Remove    ^Z Cancel    ^E Return     ^K Comment "
+    
+    if e.searchState != nil && e.searchState.active && len(e.searchState.matchedFiles) > 0 {
+        filesInfo1, filesInfo2 := e.formatFilesInfoForTwoLines()
+        
+        if filesInfo1 != "" {
+            bottom1 = filesInfo1
+        }
+        if filesInfo2 != "" {
+            bottom2 = filesInfo2
+        }
+    }
 
-	bottom2 := "^L Prompt    ^R Run code ^N New file ^O Open file ^S Save file ^Q Quit file ^F Find text ^G Go to line ^P Push Git"
-	bottom1 := "^J HELP      ^C Copy     ^V Insert   ^B Next      ^A All       ^X Remove    ^Z Cancel    ^E Return     ^K Comment "
+    lineRunes := make([]rune, e.contentWidth)
+    for i := range lineRunes {
+        lineRunes[i] = ' '
+    }
+    leftRunes := []rune(left)
+    for i, r := range leftRunes {
+        if i >= e.contentWidth {
+            break
+        }
+        lineRunes[i] = r
+    }
+    leftLen := len(leftRunes)
+    rem := e.contentWidth - leftLen
+    if rem < 0 {
+        rem = 0
+    }
+    centerRunes := []rune(center)
+    centerPos := leftLen + (rem-len(centerRunes))/2
+    if centerPos < leftLen {
+        centerPos = leftLen
+    }
+    for i, r := range centerRunes {
+        pos := centerPos + i
+        if pos >= e.contentWidth {
+            break
+        }
+        lineRunes[pos] = r
+    }
+    top := string(lineRunes)
 
-	return top, bottom1, bottom2
+    return top, bottom1, bottom2
 }
+
+// formatFilesInfoForTwoLines форматирует информацию о файлах с совпадениями для двух строк
+// formatFilesInfoForTwoLines formats files with matches information for two lines
+func (e *Editor) formatFilesInfoForTwoLines() (string, string) {
+    if e.searchState == nil || !e.searchState.active || len(e.searchState.matchedFiles) == 0 {
+        return "", ""
+    }
+
+    maxFilesPerLine := 8      
+    maxFilenameLength := 15           
+    var filesLine1, filesLine2 []string
+    filesShown := 0
+    
+    for _, filename := range e.searchState.matchedFiles {
+        if filesShown >= maxFilesPerLine*2 {      
+            remaining := len(e.searchState.matchedFiles) - filesShown
+            if remaining > 0 {
+                if filesShown < maxFilesPerLine {
+                    filesLine1 = append(filesLine1, fmt.Sprintf("...(+%d)", remaining))
+                } else {
+                    filesLine2 = append(filesLine2, fmt.Sprintf("...(+%d)", remaining))
+                }
+            }
+            break
+        }
+        
+        matchCount := e.searchState.projectMatches[filename]
+        
+        displayName := filename
+        if len(displayName) > maxFilenameLength {
+            displayName = displayName[:maxFilenameLength-3] + "..."
+        }
+        
+        fileInfo := fmt.Sprintf("%s(%d)", displayName, matchCount)
+        
+        if filesShown < maxFilesPerLine {
+            filesLine1 = append(filesLine1, fileInfo)
+        } else {
+            filesLine2 = append(filesLine2, fileInfo)
+        }
+        filesShown++
+    }
+    
+    line1 := "Files: " + strings.Join(filesLine1, ", ")
+    line2 := ""
+    if len(filesLine2) > 0 {
+        line2 = "       " + strings.Join(filesLine2, ", ")
+    }
+    
+    maxLength := e.contentWidth - 5
+    if len(line1) > maxLength {
+        line1 = line1[:maxLength] + "..."
+    }
+    if len(line2) > maxLength {
+        line2 = line2[:maxLength] + "..."
+    }
+    
+    return line2, line1
+}
+
 
 // pasteFromClipboard reads text from the system clipboard and inserts it at the cursor position.
 // pasteFromClipboard читает текст из системного буфера обмена и вставляет его в позицию курсора.
@@ -1343,8 +1437,10 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 			e.render()
 			return
 		}
+
 	case tcell.KeyEnter:
 		e.multiLinePrompt.Value += "\n"
+
 	case tcell.KeyCtrlL:
 		if e.multiLinePrompt != nil {
 			if strings.TrimSpace(e.multiLinePrompt.Value) != "" {
@@ -1360,6 +1456,7 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 			}
 		}
 		e.ctrlLState = false
+
 	case tcell.KeyCtrlP:
 		if e.multiLinePrompt != nil && strings.TrimSpace(e.multiLinePrompt.Value) != "" {
 			instruction := e.multiLinePrompt.Value
@@ -1370,6 +1467,24 @@ func (e *Editor) handleMultiLinePromptInput(ev *tcell.EventKey) {
 			e.saveToGitHub()
 		} else {
 			e.showError("Not a GitHub project. Open a GitHub URL to enable this feature.")
+		}
+
+	case tcell.KeyCtrlC:
+		if e.multiLinePrompt != nil {
+			if strings.TrimSpace(e.multiLinePrompt.Value) != "" {
+				instruction := e.multiLinePrompt.Value
+				e.multiLinePrompt = nil
+				if cb := getClipboardData(); cb != "" {
+					e.llmQueryWithClipboard(instruction)
+				} else {
+					e.llmQuery(instruction)
+				}
+
+				e.resetEditorStates()
+			} else {
+				e.multiLinePrompt = nil
+				e.resetEditorStates()
+			}
 		}
 	default:
 		if ev.Key() == tcell.KeyBackspace || ev.Key() == tcell.KeyBackspace2 {
@@ -1463,15 +1578,27 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	}
 
 	switch ev.Key() {
-	case tcell.KeyCtrlD:
-		e.showLineNumbers = !e.showLineNumbers
-		e.refreshSize()
-		if e.showLineNumbers {
-			e.statusMessage("Line numbers enabled")
-		} else {
-			e.statusMessage("Line numbers disabled")
-		}
-		return
+    case tcell.KeyCtrlD:
+        e.showLineNumbers = !e.showLineNumbers
+        e.showStructurePanel = !e.showStructurePanel
+        if e.showStructurePanel && e.structurePanelWidth == 0 {
+            e.structurePanelWidth = 4
+        }
+        e.refreshSize()
+        
+        msgParts := []string{}
+        if e.showLineNumbers {
+            msgParts = append(msgParts, "Line numbers enabled")
+        } else {
+            msgParts = append(msgParts, "Line numbers disabled")
+        }
+        if e.showStructurePanel {
+            msgParts = append(msgParts, "Structure panel enabled")
+        } else {
+            msgParts = append(msgParts, "Structure panel disabled")
+        }
+        e.statusMessage(strings.Join(msgParts, " | "))
+	    return
 	case tcell.KeyCtrlN:
 		e.createNewCanvas()
 		e.ctrlAState = false
@@ -1596,30 +1723,40 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlLState = false
 		e.handleExitWithCanvasCheck()
 	case tcell.KeyCtrlF:
-		e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
-			trimmed := strings.TrimSpace(input)
-			if trimmed == "" {
-				e.lastSearch = input
-				return
-			}
-			if strings.Contains(trimmed, " -> ") {
-				parts := strings.SplitN(trimmed, " -> ", 2)
-				if len(parts) == 2 {
-					old := parts[0]
-					newS := parts[1]
-					replaced := e.replaceAllOccurrences(old, newS)
-					e.statusMessage(fmt.Sprintf("Replaced %d occurrence(s) of %q with %q", replaced, old, newS))
-					e.prompt = nil
-					return
-				}
-			}
-
-			e.findAndJump(input)
-			if strings.TrimSpace(input) != "" {
-				e.lastSearch = input
-			}
-		})
-		e.ctrlAState = false
+        e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
+            trimmed := strings.TrimSpace(input)
+            if trimmed == "" {
+                e.lastSearch = input
+                return
+            }
+    
+            pattern, searchAll := e.parseSearchQuery(trimmed)
+            
+            if pattern == "" {
+                return
+            }
+    
+            if searchAll {
+                e.findInAllCanvases(pattern)
+            } else if strings.Contains(trimmed, " -> ") {
+                parts := strings.SplitN(trimmed, " -> ", 2)
+                if len(parts) == 2 {
+                    old := parts[0]
+                    newS := parts[1]
+                    replaced := e.replaceAllOccurrences(old, newS)
+                    e.statusMessage(fmt.Sprintf("Replaced %d occurrence(s) of %q with %q", replaced, old, newS))
+                    e.prompt = nil
+                    return
+                }
+            } else {
+                e.findInCurrentCanvas(pattern)
+            }
+            
+            if strings.TrimSpace(input) != "" {
+                e.lastSearch = input
+            }
+        })
+    	e.ctrlAState = false
 		e.ctrlLState = false
 	case tcell.KeyCtrlL:
 		e.llmPromptWithPrevShow()
@@ -1871,6 +2008,7 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlAState = false
 		e.ctrlLState = false
 		e.terminalPrompt = nil
+		e.clearSearch()
 		// Hide tooltip if visible
 		// if e.tooltipManager != nil {
 		// 	e.tooltipManager.hideTooltip()
@@ -2323,6 +2461,8 @@ func (e *Editor) render() {
 		}
 	}
 
+	e.highlightSearchMatches(display, contentRows)
+
 	if e.bracketMatcher != nil {
 		matchingPair := e.bracketMatcher.getBracketAtCursor()
 		if matchingPair != nil {
@@ -2430,6 +2570,8 @@ func (e *Editor) render() {
 			}
 		}
 	}
+
+	e.markSearchLinesInNumbers(display, contentRows)
 
 	curDisplayRow, _, cursorInSeg := e.cursorDisplayPosition()
 	cursorY := curDisplayRow - e.offsetY + 1
@@ -2549,39 +2691,41 @@ func (e *Editor) render() {
 		}
 		x++
 	}
-
 	if bottomLine2 != "" {
-		y2 := e.contentHeight - 2
-		b2 := []rune(bottomLine2)
-		x = 0
-		for x < e.contentWidth {
-			var ch rune = ' '
-			if x < len(b2) {
-				ch = b2[x]
-			}
-			if ch == '^' && x+1 < len(b2) {
-				e.screen.SetContent(x, y2, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
-				next := b2[x+1]
-				inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
-				if x+1 < e.contentWidth {
-					e.screen.SetContent(x+1, y2, next, nil, inv)
-				}
-				x += 2
-				continue
-			}
-			style := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
-			if x < len(b2) {
-				e.screen.SetContent(x, y2, ch, nil, style)
-			} else {
-				e.screen.SetContent(x, y2, ' ', nil, style)
-			}
-			x++
-		}
-	} else {
-		for i := 0; i < e.contentWidth; i++ {
-			e.screen.SetContent(i, e.contentHeight-2, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
-		}
-	}
+        y2 := e.contentHeight - 2
+        b2 := []rune(bottomLine2)
+        x = 0
+        for x < e.contentWidth {
+            var ch rune = ' '
+            if x < len(b2) {
+                ch = b2[x]
+            }
+            if ch == '^' && x+1 < len(b2) {
+                e.screen.SetContent(x, y2, ch, nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+                next := b2[x+1]
+                inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+                if x+1 < e.contentWidth {
+                    e.screen.SetContent(x+1, y2, next, nil, inv)
+                }
+                x += 2
+                continue
+            }
+            style := tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite)
+            if x < len(b2) {
+                e.screen.SetContent(x, y2, ch, nil, style)
+            } else {
+                e.screen.SetContent(x, y2, ' ', nil, style)
+            }
+            x++
+        }
+    } else {
+        for i := 0; i < e.contentWidth; i++ {
+            e.screen.SetContent(i, e.contentHeight-2, ' ', nil, tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
+        }
+    }
+
+	e.drawStructurePanel(display, contentRows)
+
 	if !e.canvasWarningTime.IsZero() && time.Since(e.canvasWarningTime) < 3*time.Second {
 		warningMsg := "Maximum number of canvases: " + strconv.Itoa(MaxCanvases)
 		for i := 0; i < e.contentWidth; i++ {
@@ -2701,4 +2845,507 @@ func (e *Editor) getSelectionRange() (int, int, int, int) {
 	}
 
 	return startLine, startCol, endLine, endCol
+}
+
+// buildStructureForLine — строит упрощённое представление строки как срез panelCell длиной width.
+func (e *Editor) buildStructureForLine(lineIdx int, width int) []panelCell {
+	res := make([]panelCell, width)
+	if width <= 0 || lineIdx < 0 || lineIdx >= len(e.lines) {
+		for i := range res {
+			res[i] = panelCell{Ch: ' ', Style: styleDefault}
+		}
+		return res
+	}
+
+	line := e.lines[lineIdx]
+	tokens := e.highlightLine(line, lineIdx)
+	tokenChars := make([]int, 0, len(tokens))
+	tokenStyles := make([]tcell.Style, 0, len(tokens))
+	totalChars := 0
+	for _, tk := range tokens {
+		cnt := 0
+		for _, r := range tk.Text {
+			if r != ' ' && r != '\t' && r != '\r' && r != '\n' {
+				cnt++
+			}
+		}
+		tokenChars = append(tokenChars, cnt)
+		tokenStyles = append(tokenStyles, tk.Style)
+		totalChars += cnt
+	}
+
+	if totalChars == 0 {
+		for i := range res {
+			res[i] = panelCell{Ch: ' ', Style: styleDefault}
+		}
+		return res
+	}
+	cols := make([]int, len(tokenChars))
+	sumCols := 0
+	for i, c := range tokenChars {
+		if c == 0 {
+			cols[i] = 1
+		} else {
+			alloc := int(math.Round(float64(c) * float64(width) / float64(totalChars)))
+			if alloc < 1 {
+				alloc = 1
+			}
+			cols[i] = alloc
+		}
+		sumCols += cols[i]
+	}
+	for sumCols > width {
+		maxIdx := -1
+		maxVal := 0
+		for i, v := range cols {
+			if v > maxVal {
+				maxVal = v
+				maxIdx = i
+			}
+		}
+		if maxIdx == -1 {
+			break
+		}
+		cols[maxIdx]--
+		sumCols--
+	}
+	for sumCols < width {
+		maxIdx := -1
+		maxVal := -1
+		for i, v := range cols {
+			if v > maxVal {
+				maxVal = v
+				maxIdx = i
+			}
+		}
+		if maxIdx == -1 {
+			break
+		}
+		cols[maxIdx]++
+		sumCols++
+	}
+	pos := 0
+	for i, alloc := range cols {
+		style := tokenStyles[i]
+		ch := '.'
+		if tokenChars[i] == 0 {
+			for k := 0; k < alloc && pos < width; k++ {
+				res[pos] = panelCell{Ch: ' ', Style: styleDefault}
+				pos++
+			}
+			continue
+		}
+		for k := 0; k < alloc && pos < width; k++ {
+			res[pos] = panelCell{Ch: ch, Style: style}
+			pos++
+		}
+	}
+	for pos < width {
+		res[pos] = panelCell{Ch: ' ', Style: styleDefault}
+		pos++
+	}
+	return res
+}
+
+// drawStructurePanel — рисует правую панель как мини-карту всего буфера display.
+func (e *Editor) drawStructurePanel(display []DisplayRow, contentRows int) {
+	if !e.showStructurePanel || e.structurePanelWidth <= 0 {
+		return
+	}
+	panelStartX := e.contentWidth - e.structurePanelWidth
+	if panelStartX < 0 {
+		return
+	}
+	sepX := panelStartX - 1
+	if sepX >= 0 {
+		for y := 1; y <= contentRows; y++ {
+			e.screen.SetContent(sepX, y, '│', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
+		}
+	}
+
+	totalDisplay := len(display)
+	if totalDisplay == 0 {
+		for i := 0; i < contentRows; i++ {
+			for x := 0; x < e.structurePanelWidth; x++ {
+				e.screen.SetContent(panelStartX+x, i+1, ' ', nil, styleDefault)
+			}
+		}
+		return
+	}
+	curDisplayRow, _, _ := e.cursorDisplayPosition()
+	cursorPanelRow := int(math.Floor(float64(curDisplayRow) * float64(contentRows) / float64(totalDisplay)))
+	if cursorPanelRow < 0 {
+		cursorPanelRow = 0
+	}
+	if cursorPanelRow >= contentRows {
+		cursorPanelRow = contentRows - 1
+	}
+
+	viewportStart := e.offsetY
+	viewportEnd := e.offsetY + contentRows - 1
+	viewportPanelStart := int(math.Floor(float64(viewportStart) * float64(contentRows) / float64(totalDisplay)))
+	viewportPanelEnd := int(math.Floor(float64(viewportEnd) * float64(contentRows) / float64(totalDisplay)))
+	if viewportPanelStart < 0 {
+		viewportPanelStart = 0
+	}
+	if viewportPanelEnd >= contentRows {
+		viewportPanelEnd = contentRows - 1
+	}
+	if viewportPanelEnd < viewportPanelStart {
+		viewportPanelEnd = viewportPanelStart
+	}
+
+	for panelRow := 0; panelRow < contentRows; panelRow++ {
+		mappedDi := int(math.Floor(float64(panelRow) * float64(totalDisplay) / float64(contentRows)))
+		if mappedDi < 0 {
+			mappedDi = 0
+		}
+		if mappedDi >= totalDisplay {
+			mappedDi = totalDisplay - 1
+		}
+
+		lineIdx := display[mappedDi].lineIndex
+		cells := e.buildStructureForLine(lineIdx, e.structurePanelWidth)
+		invertCol := -1
+		if panelRow == cursorPanelRow {
+			if e.cy >= 0 && e.cy < len(e.lines) {
+				lineRunes := []rune(e.lines[e.cy])
+				totalChars := len(lineRunes)
+				if totalChars > 0 {
+					ratio := float64(e.cx) / float64(totalChars)
+					invertCol = int(math.Floor(ratio * float64(e.structurePanelWidth)))
+					if invertCol < 0 {
+						invertCol = 0
+					}
+					if invertCol >= e.structurePanelWidth {
+						invertCol = e.structurePanelWidth - 1
+					}
+				}
+			}
+		}
+		isInViewport := (panelRow >= viewportPanelStart && panelRow <= viewportPanelEnd)
+		for x := 0; x < e.structurePanelWidth; x++ {
+			ch := cells[x].Ch
+			st := cells[x].Style
+			if isInViewport {
+				st = st.Background(tcell.ColorDarkGray)
+			}
+			if x == invertCol && panelRow == cursorPanelRow {
+				inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+				e.screen.SetContent(panelStartX+x, panelRow+1, ch, nil, inv)
+			} else {
+				e.screen.SetContent(panelStartX+x, panelRow+1, ch, nil, st)
+			}
+		}
+	}
+}
+
+// highlightSearchMatches подсвечивает все совпадения в тексте
+func (e *Editor) highlightSearchMatches(display []DisplayRow, contentRows int) {
+    if e.searchState == nil || !e.searchState.active || e.searchState.pattern == "" {
+        return
+    }
+
+    pattern := strings.ToLower(e.searchState.pattern)
+    
+    for i := 0; i < contentRows; i++ {
+        di := e.offsetY + i
+        if di >= len(display) {
+            continue
+        }
+        
+        row := display[di]
+        line := e.lines[row.lineIndex]
+        lineLower := strings.ToLower(line)
+        
+        start := 0
+        for {
+            pos := strings.Index(lineLower[start:], pattern)
+            if pos == -1 {
+                break
+            }
+            
+            absPos := start + pos
+            endPos := absPos + len(pattern)
+            
+            segStart := 0
+            for s := 0; s < row.segIndex; s++ {
+                segStart += len([]rune(e.wrapLine(e.lines[row.lineIndex])[s]))
+            }
+            segEnd := segStart + len([]rune(row.text))
+            
+            if absPos >= segStart && absPos < segEnd {
+                segPos := absPos - segStart
+                segEndPos := endPos - segStart
+                if segEndPos > len([]rune(row.text)) {
+                    segEndPos = len([]rune(row.text))
+                }
+                
+                xPos := e.lineNumbersWidth
+                runes := []rune(row.text)
+                
+                for j := 0; j < segPos && xPos < e.contentWidth; j++ {
+                    r := runes[j]
+                    if r == '\t' {
+                        xPos += 4 - (xPos % 4)
+                    } else {
+                        xPos += runewidth.RuneWidth(r)
+                    }
+                }
+                
+                for j := segPos; j < segEndPos && xPos < e.contentWidth; j++ {
+                    r := runes[j]
+                    rw := runewidth.RuneWidth(r)
+                    
+                    for k := 0; k < rw && xPos < e.contentWidth; k++ {
+                        drawRune := r
+                        if k > 0 {
+                            drawRune = ' '
+                        }
+                        e.screen.SetContent(xPos+k, i+1, drawRune, nil, 
+                            tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack))
+                    }
+                    xPos += rw
+                }
+            }
+            
+            start = absPos + len(pattern)
+            if start >= len(lineLower) {
+                break
+            }
+        }
+    }
+}
+
+// markSearchLinesInNumbers отмечает строки с совпадениями в нумерации
+func (e *Editor) markSearchLinesInNumbers(display []DisplayRow, contentRows int) {
+    if e.searchState == nil || !e.searchState.active {
+        return
+    }
+
+    lineMatches := make(map[int]bool)
+    for _, match := range e.searchState.matches {
+        if match.canvas == e.currentCanvas {
+            lineMatches[match.line] = true
+        }
+    }
+
+    for i := 0; i < contentRows; i++ {
+        di := e.offsetY + i
+        if di >= len(display) {
+            continue
+        }
+
+        row := display[di]
+        if lineMatches[row.lineIndex] {
+            lineNumStyle := tcell.StyleDefault.
+                Background(tcell.ColorRed).
+                Foreground(tcell.ColorWhite)
+
+            lineNumber := row.lineIndex + 1
+            lineNumStr := strconv.Itoa(lineNumber)
+            padding := e.lineNumbersWidth - len(lineNumStr) - LineNumbersPadding
+
+            for x := 0; x < e.lineNumbersWidth; x++ {
+                e.screen.SetContent(x, i+1, ' ', nil, lineNumStyle)
+            }
+
+            xPos := padding
+            for _, r := range lineNumStr {
+                if xPos >= e.lineNumbersWidth {
+                    break
+                }
+                e.screen.SetContent(xPos, i+1, r, nil, lineNumStyle)
+                xPos++
+            }
+
+            if e.lineNumbersWidth > 1 {
+                separatorX := e.lineNumbersWidth - 1
+                e.screen.SetContent(separatorX, i+1, '│', nil, lineNumStyle)
+            }
+        }
+    }
+}
+
+
+// findInCurrentCanvas ищет текст в текущем канвасе
+func (e *Editor) findInCurrentCanvas(pattern string) {
+    if pattern == "" {
+        return
+    }
+
+    e.searchState = &SearchState{
+        pattern:        pattern,
+        matches:        make([]MatchPosition, 0),
+        currentMatch:   0,
+        active:         true,
+        projectMatches: make(map[string]int),
+    }
+
+    patternLower := strings.ToLower(pattern)
+    
+    for lineIdx, line := range e.lines {
+        lineLower := strings.ToLower(line)
+        start := 0
+        for {
+            pos := strings.Index(lineLower[start:], patternLower)
+            if pos == -1 {
+                break
+            }
+            
+            absPos := start + pos
+            e.searchState.matches = append(e.searchState.matches, MatchPosition{
+                line:   lineIdx,
+                start:  absPos,
+                end:    absPos + len(pattern),
+                canvas: e.currentCanvas,
+            })
+            
+            start = absPos + len(pattern)
+            if start >= len(lineLower) {
+                break
+            }
+        }
+    }
+
+    if len(e.searchState.matches) > 0 {
+        e.searchState.projectMatches[e.filename] = len(e.searchState.matches)
+        e.jumpToMatch(0)
+    }
+}
+
+// findInAllCanvases ищет текст во всех канвасах проекта
+func (e *Editor) findInAllCanvases(pattern string) {
+    if pattern == "" {
+        return
+    }
+
+    oldCanvas := e.currentCanvas
+    defer func() {
+        e.currentCanvas = oldCanvas
+        e.syncCanvasToEditor()
+    }()
+
+    e.searchState = &SearchState{
+        pattern:        pattern,
+        matches:        make([]MatchPosition, 0),
+        currentMatch:   0,
+        active:         true,
+        projectMatches: make(map[string]int),
+        matchedFiles:   make([]string, 0),
+    }
+
+    patternLower := strings.ToLower(pattern)
+
+    for canvasNum, canvas := range e.canvases {
+        e.currentCanvas = canvasNum
+        e.syncCanvasToEditor()
+
+        matchCount := 0
+        for lineIdx, line := range e.lines {
+            lineLower := strings.ToLower(line)
+            start := 0
+            for {
+                pos := strings.Index(lineLower[start:], patternLower)
+                if pos == -1 {
+                    break
+                }
+                
+                absPos := start + pos
+                e.searchState.matches = append(e.searchState.matches, MatchPosition{
+                    line:   lineIdx,
+                    start:  absPos,
+                    end:    absPos + len(pattern),
+                    canvas: canvasNum,
+                })
+                matchCount++
+                
+                start = absPos + len(pattern)
+                if start >= len(lineLower) {
+                    break
+                }
+            }
+        }
+
+        if matchCount > 0 {
+            filename := canvas.filename
+            if filename == "" {
+                filename = fmt.Sprintf("Canvas %d", canvasNum)
+            } else {
+                filename = filepath.Base(filename)
+            }
+            e.searchState.projectMatches[filename] = matchCount
+            e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
+        }
+    }
+
+    if len(e.searchState.matches) > 0 {
+        e.statusMessage(fmt.Sprintf("Found %d matches in %d files", 
+            len(e.searchState.matches), len(e.searchState.projectMatches)))
+        e.jumpToMatch(0)
+    } else {
+        e.statusMessage("No matches found")
+        e.searchState.active = false
+    }
+}
+
+// jumpToMatch переходит к указанному совпадению
+func (e *Editor) jumpToMatch(matchIndex int) {
+    if e.searchState == nil || matchIndex < 0 || matchIndex >= len(e.searchState.matches) {
+        return
+    }
+
+    match := e.searchState.matches[matchIndex]
+    
+    if match.canvas != e.currentCanvas {
+        e.currentCanvas = match.canvas
+        e.syncCanvasToEditor()
+    }
+
+    e.cy = match.line
+    if e.cy >= len(e.lines) {
+        e.cy = len(e.lines) - 1
+    }
+    e.cx = match.start
+    
+    e.searchState.currentMatch = matchIndex
+    e.ensureVisible()
+    
+    e.statusMessage(fmt.Sprintf("Match %d/%d", matchIndex+1, len(e.searchState.matches)))
+}
+
+// nextMatch переходит к следующему совпадению
+func (e *Editor) nextMatch() {
+    if e.searchState == nil || !e.searchState.active || len(e.searchState.matches) == 0 {
+        return
+    }
+    
+    nextIndex := (e.searchState.currentMatch + 1) % len(e.searchState.matches)
+    e.jumpToMatch(nextIndex)
+}
+
+// clearSearch сбрасывает состояние поиска
+func (e *Editor) clearSearch() {
+    if e.searchState != nil {
+        e.searchState.active = false
+		e.searchState.matchedFiles = nil
+    }
+    e.render()
+}
+
+// parseSearchQuery парсит поисковый запрос и определяет тип поиска
+// parseSearchQuery parses search query and determines search type
+func (e *Editor) parseSearchQuery(input string) (pattern string, searchAll bool) {
+    trimmed := strings.TrimSpace(input)
+    if trimmed == "" {
+        return "", false
+    }
+
+    if strings.HasSuffix(trimmed, " /all") {
+        pattern = strings.TrimSuffix(trimmed, " /all")
+        pattern = strings.TrimSpace(pattern)
+        return pattern, pattern != ""
+    }
+
+    return trimmed, false
 }
