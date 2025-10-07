@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)  
 [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
 
-Version: **0.9.16**
+Version: **0.9.17**
 ![Editor's screenshot](Editor.png)
 
 ## Project Description
@@ -23,6 +23,7 @@ easy-to-use navigation, editing commands, and built-in integration with LLM (Lar
 - Multiple "canvases" (working buffers) within the same session.
 - Support for working with GitHub projects: ZIP cloning, structure overview, commit/push (Ctrl-P).
 - Translation of text or selected code into any language with replacement (Ctrl-W).
+- Code autocompletion (context of 30 lines before the cursor and 10 after) is triggered by pressing Tab after a word.
 
 ## Installation
 ```
