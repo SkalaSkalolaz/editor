@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"regexp"
 
 	"github.com/atotto/clipboard"
 )
@@ -217,7 +218,18 @@ func isURL(s string) bool {
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
+// extractContentFromLLMResponse универсально распознаёт текст или JSON-ответ LLM
+// и извлекает текстовое содержимое ("content", "text" и т.д.).
 func extractContentFromLLMResponse(body []byte) (string, error) {
+	raw := strings.TrimSpace(string(body))
+	if raw == "" {
+		return "", errors.New("empty LLM response body")
+	}
+
+	if content, err := extractContentFromPossibleJSON(raw); err == nil && content != "" {
+		return content, nil
+	}
+
 	type aiResp struct {
 		Choices []struct {
 			Message struct {
@@ -225,46 +237,195 @@ func extractContentFromLLMResponse(body []byte) (string, error) {
 			} `json:"message"`
 			Content string `json:"content"`
 			Text    string `json:"text"`
+			Delta   struct {
+				Content string `json:"content"`
+			} `json:"delta"`
 		} `json:"choices"`
-		Text string `json:"text"`
+		Text   string `json:"text"`
+		Output string `json:"output"`
+		Data   string `json:"data"`
 	}
+
 	var r aiResp
 	if err := json.Unmarshal(body, &r); err == nil {
-		if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
-			return r.Choices[0].Message.Content, nil
+		if len(r.Choices) > 0 {
+			choice := r.Choices[0]
+			if choice.Message.Content != "" {
+				return choice.Message.Content, nil
+			}
+			if choice.Delta.Content != "" {
+				return choice.Delta.Content, nil
+			}
+			if choice.Content != "" {
+				return choice.Content, nil
+			}
+			if choice.Text != "" {
+				return choice.Text, nil
+			}
 		}
-		if r.Choices[0].Content != "" {
-			return r.Choices[0].Content, nil
+		if r.Text != "" {
+			return r.Text, nil
 		}
-		if r.Choices[0].Text != "" {
-			return r.Choices[0].Text, nil
+		if r.Output != "" {
+			return r.Output, nil
+		}
+		if r.Data != "" {
+			return r.Data, nil
 		}
 	}
-	var m map[string]interface{}
-	if err := json.Unmarshal(body, &m); err == nil {
-		if t, ok := m["text"].(string); ok && t != "" {
-			return t, nil
+
+	var simpleResp struct {
+		Content string `json:"content"`
+		Text    string `json:"text"`
+		Message string `json:"message"`
+		Result  string `json:"result"`
+	}
+	if err := json.Unmarshal(body, &simpleResp); err == nil {
+		if simpleResp.Content != "" {
+			return simpleResp.Content, nil
 		}
-		if out, ok := m["output"].(string); ok && out != "" {
-			return out, nil
+		if simpleResp.Text != "" {
+			return simpleResp.Text, nil
 		}
-		if data, ok := m["data"].(string); ok && data != "" {
-			return data, nil
+		if simpleResp.Message != "" {
+			return simpleResp.Message, nil
 		}
-		if c, ok := m["choices"].([]interface{}); ok && len(c) > 0 {
-			if first, ok := c[0].(map[string]interface{}); ok {
-				if msg, ok := first["message"].(map[string]interface{}); ok {
-					if content, ok := msg["content"].(string); ok && content != "" {
-						return content, nil
-					}
-				}
-				if text, ok := first["text"].(string); ok && text != "" {
-					return text, nil
+		if simpleResp.Result != "" {
+			return simpleResp.Result, nil
+		}
+	}
+
+	return raw, nil
+}
+
+// extractContentFromPossibleJSON — улучшенный парсер LLM-ответов (распознаёт вложенный JSON, контент и text).
+func extractContentFromPossibleJSON(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", errors.New("empty response")
+	}
+
+	reFenced := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
+	if m := reFenced.FindStringSubmatch(s); len(m) > 1 {
+		s = strings.TrimSpace(m[1])
+	}
+
+	var obj interface{}
+	if err := json.Unmarshal([]byte(s), &obj); err == nil {
+		if content, ok := findContentRecursive(obj); ok {
+			content = strings.TrimSpace(content)
+			if content != "" {
+				return content, nil
+			}
+		}
+	}
+
+	first := strings.IndexAny(s, "{[")
+	lastBrace := strings.LastIndex(s, "}")
+	lastBracket := strings.LastIndex(s, "]")
+	last := lastBrace
+	if lastBracket > last {
+		last = lastBracket
+	}
+
+	if first != -1 && last > first {
+		jsonStr := s[first : last+1]
+		var innerObj interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &innerObj); err == nil {
+			if content, ok := findContentRecursive(innerObj); ok {
+				content = strings.TrimSpace(content)
+				if content != "" {
+					return content, nil
 				}
 			}
 		}
 	}
-	return "", errors.New("unable to extract content from LLM response")
+
+	return "", errors.New("no JSON content found")
+}
+
+// findContentRecursive ищет первое строковое поле "content"/"text" рекурсивно
+func findContentRecursive(v interface{}) (string, bool) {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		// Сначала проверяем приоритетные поля
+		priorityFields := []string{"content", "text", "message", "result", "output", "data"}
+		for _, field := range priorityFields {
+			if val, exists := t[field]; exists {
+				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+					return s, true
+				}
+			}
+		}
+		
+		// Проверяем choices/chat_completion формат (OpenAI-совместимый)
+		if choices, exists := t["choices"]; exists {
+			if choicesSlice, ok := choices.([]interface{}); ok && len(choicesSlice) > 0 {
+				if firstChoice, ok := choicesSlice[0].(map[string]interface{}); ok {
+					// Проверяем message.content
+					if message, exists := firstChoice["message"]; exists {
+						if messageMap, ok := message.(map[string]interface{}); ok {
+							if content, exists := messageMap["content"]; exists {
+								if s, ok := content.(string); ok && strings.TrimSpace(s) != "" {
+									return s, true
+								}
+							}
+						}
+					}
+					// Проверяем delta.content (streaming)
+					if delta, exists := firstChoice["delta"]; exists {
+						if deltaMap, ok := delta.(map[string]interface{}); ok {
+							if content, exists := deltaMap["content"]; exists {
+								if s, ok := content.(string); ok && strings.TrimSpace(s) != "" {
+									return s, true
+								}
+							}
+						}
+					}
+					// Проверяем напрямую text/content
+					if text, exists := firstChoice["text"]; exists {
+						if s, ok := text.(string); ok && strings.TrimSpace(s) != "" {
+							return s, true
+						}
+					}
+					if content, exists := firstChoice["content"]; exists {
+						if s, ok := content.(string); ok && strings.TrimSpace(s) != "" {
+							return s, true
+						}
+					}
+				}
+			}
+		}
+
+		// Рекурсивно обходим остальные поля
+		for _, val := range t {
+			if s, ok := findContentRecursive(val); ok {
+				return s, true
+			}
+		}
+
+	case []interface{}:
+		for _, item := range t {
+			if s, ok := findContentRecursive(item); ok {
+				return s, true
+			}
+		}
+
+	case string:
+		str := strings.TrimSpace(t)
+		// Если строка выглядит как JSON, пробуем распарсить рекурсивно
+		if (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) || 
+		   (strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]")) {
+			var inner interface{}
+			if err := json.Unmarshal([]byte(str), &inner); err == nil {
+				if s, ok := findContentRecursive(inner); ok {
+					return s, true
+				}
+			}
+		}
+	}
+
+	return "", false
 }
 
 func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, error) {
@@ -701,25 +862,41 @@ func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("Pollinations error: %w", err)
 		}
-		return result, nil
+		content, parseErr := extractContentFromLLMResponse([]byte(result))
+		if parseErr != nil {
+			return "", fmt.Errorf("Pollinations response parsing error: %w", parseErr)
+		}
+		return content, nil
 	case "llm7":
 		result, err := sendLLM7(apiKey)
 		if err != nil {
 			return "", fmt.Errorf("LLM7 error: %w", err)
 		}
-		return result, nil
+		content, parseErr := extractContentFromLLMResponse([]byte(result))
+		if parseErr != nil {
+			return "", fmt.Errorf("LLM7 response parsing error: %w", parseErr)
+		}
+		return content, nil
 	case "openrouter":
 		result, err := sendOpenRouter(apiKey)
 		if err != nil {
 			return "", fmt.Errorf("OpenRouter error: %w", err)
 		}
-		return result, nil
+		content, parseErr := extractContentFromLLMResponse([]byte(result))
+		if parseErr != nil {
+			return "", fmt.Errorf("OpenRouter response parsing error: %w", parseErr)
+		}
+		return content, nil
 	case "ollama":
 		result, err := sendOllama()
 		if err != nil {
 			return "", fmt.Errorf("Ollama error: %w", err)
 		}
-		return result, nil
+		content, parseErr := extractContentFromLLMResponse([]byte(result))
+		if parseErr != nil {
+			return "", fmt.Errorf("Ollama response parsing error: %w", parseErr)
+		}
+		return content, nil
 	default:
 		return "", fmt.Errorf("unsupported provider: %s", provider)
 	}
