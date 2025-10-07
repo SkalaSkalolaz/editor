@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.16"
+const Version = "0.9.17"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -71,6 +71,17 @@ type Editor struct {
     currentFileIndex  int                    
     inProjectOverview bool                   
 	fileSelection *FileSelection
+	autoCompleteMode  bool
+    autoCompleteState *AutoCompleteState
+}
+
+// AutoCompleteState хранит текущее состояние inline-autocomplete
+type AutoCompleteState struct {
+    active      bool           
+    suggestion  string         
+    fetched     bool         
+    requestedAt time.Time   
+	context     string
 }
 
 // ProjectContext представляет контекст всего проекта для отправки в LLM
@@ -866,6 +877,10 @@ func main() {
 	flag.BoolVar(&useClipboardData, "d", false, "Use clipboard data as input in stream mode (short)")
 	flag.StringVar(&inputFiles, "input", "", "Use file or directory content as input in stream mode")
 	flag.StringVar(&inputFiles, "i", "", "Use file or directory content as input in stream mode (short)")
+	
+	var autoCompleteMode bool
+    flag.BoolVar(&autoCompleteMode, "auto", false, "Enable auto-complete mode")
+    flag.BoolVar(&autoCompleteMode, "a", false, "Enable auto-complete mode (short)")
 
 	flag.Usage = printUsageExtended
 	flag.Parse()
@@ -976,6 +991,11 @@ func main() {
 	if editor == nil {
 		return
 	}
+	if autoCompleteMode && !streamMode {
+        if editor != nil {
+            editor.autoCompleteMode = true
+        }
+    }
 
 	if err := editor.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "Editor startup error:", err)
