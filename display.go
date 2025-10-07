@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"sort"
 
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
@@ -1562,10 +1563,10 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 			}
 		}
 
-		// Check if we should add closing brackets
-		// This would be for cases like pressing Tab after typing "if ("
-		// We'll add this feature later if needed
-
+		if e.inProjectOverview && len(e.projectFiles) > 0 {
+            e.handleFileSelection()
+            return
+        }
 		e.insertRune('\t')
 		return
 	}
@@ -1577,6 +1578,35 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		return
 	}
 
+    	if e.inProjectOverview && len(e.projectFiles) > 0 {
+        switch ev.Key() {
+        case tcell.KeyUp:
+            if e.currentFileIndex > 0 {
+                e.currentFileIndex--
+                e.ensureFileVisibleInOverview()
+                e.render()
+            }
+            return
+        case tcell.KeyDown:
+            if e.currentFileIndex < len(e.projectFiles)-1 {
+                e.currentFileIndex++
+                e.ensureFileVisibleInOverview()
+                e.render()
+            }
+            return
+        case tcell.KeyEnter:
+            if e.currentFileIndex >= 0 && e.currentFileIndex < len(e.projectFiles) {
+                filename := e.projectFiles[e.currentFileIndex]
+                e.openFileFromOverview(filename)
+            }
+            return
+        case tcell.KeyEsc:
+            e.clearFileSelection()
+            e.statusMessage("Selection cleared")
+            e.render()
+            return
+        }
+    }
 	switch ev.Key() {
     case tcell.KeyCtrlD:
         e.showLineNumbers = !e.showLineNumbers
@@ -2460,6 +2490,74 @@ func (e *Editor) render() {
 			e.screen.SetContent(x, i+1, ' ', nil, style)
 		}
 	}
+
+    if e.inProjectOverview && e.currentFileIndex >= 0 && len(e.projectFiles) > 0 {
+        for i := 0; i < contentRows; i++ {
+            di := e.offsetY + i
+            if di >= len(display) {
+                continue
+            }
+            
+            row := display[di]
+            lineText := strings.TrimSpace(row.text)
+            
+            isFile, filename := e.isFileLine(lineText)
+            if isFile {
+                fileIndex := -1
+                for idx, projectFile := range e.projectFiles {
+                    if projectFile == filename {
+                        fileIndex = idx
+                        break
+                    }
+                }
+                
+                if fileIndex != -1 {
+                    isSelected := e.fileSelection != nil && e.fileSelection.selectedFiles[filename]
+                    isCurrent := fileIndex == e.currentFileIndex
+                    
+                    var style tcell.Style
+                    switch {
+                    case isSelected && isCurrent:
+                        style = tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+                    case isSelected:
+                        style = tcell.StyleDefault.Background(tcell.ColorDarkGray).Foreground(tcell.ColorWhite)
+                    case isCurrent:
+                        style = tcell.StyleDefault.Background(tcell.ColorBlue).Foreground(tcell.ColorWhite)
+                    default:
+                        style = styleDefault
+                    }
+                    
+                    xPos := e.lineNumbersWidth
+                    runes := []rune(row.text)
+                    
+                    for j := 0; j < len(runes) && xPos < e.contentWidth; j++ {
+                        r := runes[j]
+                        rw := runewidth.RuneWidth(r)
+                        
+                        if j == 0 && r == '•' && (isSelected || isCurrent) {
+                            for k := 0; k < rw && xPos < e.contentWidth; k++ {
+                                drawRune := r
+                                if k > 0 {
+                                    drawRune = ' '
+                                }
+                                e.screen.SetContent(xPos+k, i+1, drawRune, nil, 
+                                    tcell.StyleDefault.Background(tcell.ColorYellow).Foreground(tcell.ColorBlack))
+                            }
+                        } else {
+                            for k := 0; k < rw && xPos < e.contentWidth; k++ {
+                                drawRune := r
+                                if k > 0 {
+                                    drawRune = ' '
+                                }
+                                e.screen.SetContent(xPos+k, i+1, drawRune, nil, style)
+                            }
+                        }
+                        xPos += rw
+                    }
+                }
+            }
+        }
+    }
 
 	e.highlightSearchMatches(display, contentRows)
 
@@ -3349,3 +3447,210 @@ func (e *Editor) parseSearchQuery(input string) (pattern string, searchAll bool)
 
     return trimmed, false
 }
+
+// ensureFileVisibleInOverview обеспечивает видимость текущего файла в обзоре
+func (e *Editor) ensureFileVisibleInOverview() {
+    if !e.inProjectOverview || len(e.projectFiles) == 0 {
+        return
+    }
+    
+    targetLine := -1
+    for i, line := range e.lines {
+        lineText := strings.TrimSpace(line)
+        if strings.HasPrefix(lineText, "•") {
+            filename := strings.TrimSpace(strings.TrimPrefix(lineText, "•"))
+            if filename == e.projectFiles[e.currentFileIndex] {
+                targetLine = i
+                break
+            }
+        }
+    }
+    
+    if targetLine != -1 {
+        visibleRows := e.contentHeight - 4
+        if targetLine < e.offsetY {
+            e.offsetY = targetLine
+        } else if targetLine >= e.offsetY+visibleRows {
+            e.offsetY = targetLine - visibleRows + 1
+        }
+        e.cy = targetLine
+    }
+}
+
+// openFileFromOverview открывает файл из обзора проекта
+func (e *Editor) openFileFromOverview(filename string) {
+    canvasNum := e.findCanvasByFilename(filename)
+    if canvasNum != -1 {
+        e.currentCanvas = canvasNum
+        e.syncCanvasToEditor()
+        e.inProjectOverview = false
+        e.statusMessage("Opened: " + filename)
+        e.ensureVisible()
+        e.render()
+    } else {
+        e.openProjectFile(filename)
+        e.inProjectOverview = false
+    }
+}
+
+// toggleFileSelection переключает выделение файла
+func (e *Editor) toggleFileSelection(fileIndex int) {
+    if !e.inProjectOverview || fileIndex < 0 || fileIndex >= len(e.projectFiles) {
+        return
+    }
+
+    if e.fileSelection == nil {
+        e.fileSelection = &FileSelection{
+            selectedFiles: make(map[string]bool),
+            lastAction:    "single",
+        }
+    }
+
+    filename := e.projectFiles[fileIndex]
+    
+    if e.fileSelection.selectedFiles[filename] {
+        delete(e.fileSelection.selectedFiles, filename)
+    } else {
+        e.fileSelection.selectedFiles[filename] = true
+        e.fileSelection.lastAction = "single"
+        e.fileSelection.anchorIndex = fileIndex
+    }
+    
+    e.currentFileIndex = fileIndex
+    e.ensureFileVisibleInOverview()
+}
+
+// selectFileRange выделяет диапазон файлов
+func (e *Editor) selectFileRange(fromIndex, toIndex int) {
+    if !e.inProjectOverview || e.fileSelection == nil {
+        return
+    }
+
+    if fromIndex > toIndex {
+        fromIndex, toIndex = toIndex, fromIndex
+    }
+
+    for i := fromIndex; i <= toIndex; i++ {
+        if i >= 0 && i < len(e.projectFiles) {
+            filename := e.projectFiles[i]
+            e.fileSelection.selectedFiles[filename] = true
+        }
+    }
+    e.fileSelection.lastAction = "range"
+}
+
+// clearFileSelection очищает выделение файлов
+func (e *Editor) clearFileSelection() {
+    if e.fileSelection != nil {
+        e.fileSelection.selectedFiles = make(map[string]bool)
+    }
+}
+
+// getSelectedFiles возвращает список выделенных файлов
+func (e *Editor) getSelectedFiles() []string {
+    if e.fileSelection == nil || len(e.fileSelection.selectedFiles) == 0 {
+        return nil
+    }
+
+    var selected []string
+    for filename := range e.fileSelection.selectedFiles {
+        fullPath := e.findFullPathForFile(filename)
+        if fullPath != "" {
+            selected = append(selected, fullPath)
+        } else {
+            selected = append(selected, filename)
+        }
+    }
+    sort.Strings(selected)
+    return selected
+}
+
+// findFullPathForFile находит полный путь файла в канвасах
+func (e *Editor) findFullPathForFile(filename string) string {
+    for _, canvas := range e.canvases {
+        if canvas.filename != "" {
+            baseName := filepath.Base(canvas.filename)
+            if baseName == filename {
+                return canvas.filename
+            }
+            if e.filename != "" {
+                if relPath, err := filepath.Rel(filepath.Dir(e.filename), canvas.filename); err == nil && relPath == filename {
+                    return canvas.filename
+                }
+            }
+        }
+    }
+    return ""
+}
+
+// isFileLine проверяет, является ли строка строкой с файлом в обзоре
+func (e *Editor) isFileLine(line string) (bool, string) {
+    line = strings.TrimSpace(line)
+    if strings.HasPrefix(line, "•") {
+        filename := strings.TrimSpace(strings.TrimPrefix(line, "•"))
+        for _, projectFile := range e.projectFiles {
+            if projectFile == filename {
+                return true, filename
+            }
+        }
+    }
+    return false, ""
+}
+
+// handleFileSelection обрабатывает выделение файлов в обзоре проекта
+func (e *Editor) handleFileSelection() {
+    if !e.inProjectOverview || e.currentFileIndex < 0 {
+        return
+    }
+
+    currentLine := e.cy
+    if currentLine < 0 || currentLine >= len(e.lines) {
+        return
+    }
+
+    lineText := strings.TrimSpace(e.lines[currentLine])
+    isFile, filename := e.isFileLine(lineText)
+    if !isFile {
+        return
+    }
+
+    targetIndex := -1
+    for idx, projectFile := range e.projectFiles {
+        if projectFile == filename {
+            targetIndex = idx
+            break
+        }
+    }
+
+    if targetIndex == -1 {
+        return
+    }
+
+    if e.fileSelection == nil {
+        e.fileSelection = &FileSelection{
+            selectedFiles: make(map[string]bool),
+            lastAction:    "single",
+            anchorIndex:   targetIndex,
+        }
+    }
+
+    shiftPressed := false
+
+    if shiftPressed && e.fileSelection.lastAction == "range" {
+        e.clearFileSelection()
+        e.selectFileRange(e.fileSelection.anchorIndex, targetIndex)
+    } else {
+        e.toggleFileSelection(targetIndex)
+    }
+
+    e.currentFileIndex = targetIndex
+    e.ensureFileVisibleInOverview()
+    
+    selectedCount := len(e.fileSelection.selectedFiles)
+    if selectedCount > 0 {
+        e.statusMessage(fmt.Sprintf("Selected %d file(s). Use Ctrl+L then Ctrl+P to send to LLM", selectedCount))
+    } else {
+        e.statusMessage("File selection cleared")
+    }
+}
+
