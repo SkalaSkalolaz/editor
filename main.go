@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.15"
+const Version = "0.9.16"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -67,6 +67,10 @@ type Editor struct {
 	structurePanelWidth int
 	searchState      *SearchState
     lastSearchPattern string
+	projectFiles      []string               
+    currentFileIndex  int                    
+    inProjectOverview bool                   
+	fileSelection *FileSelection
 }
 
 // ProjectContext представляет контекст всего проекта для отправки в LLM
@@ -83,6 +87,7 @@ type SearchState struct {
     currentMatch     int
     active           bool
     projectMatches   map[string]int
+	matchedFiles     []string
 }
 
 type MatchPosition struct {
@@ -91,6 +96,13 @@ type MatchPosition struct {
     end     int
     canvas  int
 }
+
+type FileSelection struct {
+    selectedFiles map[string]bool
+    lastAction    string    
+    anchorIndex   int        
+}
+
 
 // detectLanguage detects the language based on the file extension.
 // detectLanguage определяет язык на основе расширения файла.
@@ -287,33 +299,42 @@ func readProjectFiles(dirPath string) (map[string]string, error) {
 // NewEditorWithProject creates a new Editor instance with project files
 // NewEditorWithProject создает новый экземпляр Editor с файлами проекта
 func NewEditorWithProject(dirPath string, provider string, model string) *Editor {
-	e := &Editor{
-		filename:      dirPath,
-		lines:         []string{""},
-		dirty:         false,
-		quit:          false,
-		language:      LangUnknown,
-		canvases:      make(map[int]*Canvas),
-		currentCanvas: 1,
-	}
+    e := &Editor{
+        filename:          dirPath,
+        lines:             []string{""},
+        dirty:             false,
+        quit:              false,
+        language:          LangUnknown,
+        canvases:          make(map[int]*Canvas),
+        currentCanvas:     1,
+        projectFiles:      []string{},
+        currentFileIndex:  -1,
+        inProjectOverview: true,
+		fileSelection: &FileSelection{
+            selectedFiles: make(map[string]bool),
+        },
+    }
 
-	canvas := &Canvas{
-		filename: dirPath,
-		lines:    []string{""},
-		cx:       0,
-		cy:       0,
-		offsetX:  0,
-		offsetY:  0,
-		dirty:    false,
-		language: LangUnknown,
-	}
+    canvas := &Canvas{
+        filename: dirPath,
+        lines:    []string{""},
+        cx:       0,
+        cy:       0,
+        offsetX:  0,
+        offsetY:  0,
+        dirty:    false,
+        language: LangUnknown,
+    }
 
-	projectFiles, err := readProjectFiles(dirPath)
-	if err != nil {
-		canvas.lines = []string{"Error reading project: " + err.Error(), ""}
-	} else {
-		canvas.lines = createProjectOverview(projectFiles)
-	}
+    projectFiles, err := readProjectFiles(dirPath)
+    if err != nil {
+        canvas.lines = []string{"Error reading project: " + err.Error(), ""}
+    } else {
+        overviewLines, fileList := e.createProjectOverviewWithFiles(projectFiles)
+        canvas.lines = overviewLines
+        e.projectFiles = fileList
+        e.currentFileIndex = 0
+    }
 
 	e.canvases[1] = canvas
 	e.syncCanvasToEditor()
@@ -340,76 +361,161 @@ func NewEditorWithProject(dirPath string, provider string, model string) *Editor
 // createProjectOverview creates a formatted overview of project files
 // createProjectOverview создает форматированный обзор файлов проекта
 func createProjectOverview(files map[string]string) []string {
-	lines := []string{
-		"PROJECT OVERVIEW",
-		"================",
-		"",
-		"Files found: " + strconv.Itoa(len(files)),
-		"",
-	}
+    lines := []string{
+        "PROJECT OVERVIEW",
+        "================",
+        "",
+        "Files found: " + strconv.Itoa(len(files)),
+        "",
+    }
 
-	// Sort filenames for consistent display
-	var filenames []string
-	for filename := range files {
-		filenames = append(filenames, filename)
-	}
-	sort.Strings(filenames)
+    var filenames []string
+    for filename := range files {
+        filenames = append(filenames, filename)
+    }
+    sort.Strings(filenames)
 
-	sourceFiles := []string{}
-	configFiles := []string{}
-	docFiles := []string{}
+    sourceFiles := []string{}
+    configFiles := []string{}
+    docFiles := []string{}
 
-	for _, filename := range filenames {
-		ext := strings.ToLower(filepath.Ext(filename))
-		lowerName := strings.ToLower(filename)
+    for _, filename := range filenames {
+        ext := strings.ToLower(filepath.Ext(filename))
+        lowerName := strings.ToLower(filename)
 
-		switch {
-		case isSourceFile(ext):
-			sourceFiles = append(sourceFiles, filename)
-		case isConfigFile(filename) || strings.Contains(lowerName, "config") ||
-			strings.Contains(lowerName, "makefile") || strings.Contains(lowerName, "docker"):
-			configFiles = append(configFiles, filename)
-		case strings.Contains(lowerName, "readme") || strings.Contains(lowerName, "license") ||
-			strings.Contains(lowerName, "copying") || strings.Contains(lowerName, "credits") || 
-			strings.Contains(lowerName, "project"):
-			docFiles = append(docFiles, filename)
-		default:
-			configFiles = append(configFiles, filename)
-		}
-	}
+        switch {
+        case isSourceFile(ext):
+            sourceFiles = append(sourceFiles, filename)
+        case isConfigFile(filename) || strings.Contains(lowerName, "config") ||
+            strings.Contains(lowerName, "makefile") || strings.Contains(lowerName, "docker"):
+            configFiles = append(configFiles, filename)
+        case strings.Contains(lowerName, "readme") || strings.Contains(lowerName, "license") ||
+            strings.Contains(lowerName, "copying") || strings.Contains(lowerName, "credits") || 
+            strings.Contains(lowerName, "project"):
+            docFiles = append(docFiles, filename)
+        default:
+            configFiles = append(configFiles, filename)
+        }
+    }
 
-	if len(sourceFiles) > 0 {
-		lines = append(lines, "SOURCE FILES:")
-		lines = append(lines, "-------------")
-		for _, file := range sourceFiles {
-			lines = append(lines, "  • "+file)
-		}
-		lines = append(lines, "")
-	}
+    allDisplayFiles := []string{}
+    
+    if len(sourceFiles) > 0 {
+        lines = append(lines, "SOURCE FILES:")
+        lines = append(lines, "-------------")
+        for _, file := range sourceFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
 
-	if len(configFiles) > 0 {
-		lines = append(lines, "CONFIGURATION FILES:")
-		lines = append(lines, "---------------------")
-		for _, file := range configFiles {
-			lines = append(lines, "  • "+file)
-		}
-		lines = append(lines, "")
-	}
+    if len(configFiles) > 0 {
+        lines = append(lines, "CONFIGURATION FILES:")
+        lines = append(lines, "---------------------")
+        for _, file := range configFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
 
-	if len(docFiles) > 0 {
-		lines = append(lines, "DOCUMENTATION:")
-		lines = append(lines, "--------------")
-		for _, file := range docFiles {
-			lines = append(lines, "  • "+file)
-		}
-		lines = append(lines, "")
-	}
+    if len(docFiles) > 0 {
+        lines = append(lines, "DOCUMENTATION:")
+        lines = append(lines, "--------------")
+        for _, file := range docFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
 
-	lines = append(lines, "Navigation: Use Ctrl+B to switch between files")
-	lines = append(lines, "Press Ctrl+O and type filename to open specific file")
-	lines = append(lines, "Press Ctrl+N: Create a new file in the canvas")
+    lines = append(lines, "Navigation: Use Ctrl+B to switch between files")
+    lines = append(lines, "Press Ctrl+O and type filename to open specific file") 
+    lines = append(lines, "Press Ctrl+N: Create a new file in the canvas")
+    lines = append(lines, "")
+    lines = append(lines, "Use Arrow Keys to navigate files and Enter to open")
 
-	return lines
+    return lines
+}
+
+// createProjectOverviewWithFiles создает обзор проекта и возвращает список файлов
+func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]string, []string) {
+    lines := []string{
+        "PROJECT OVERVIEW",
+        "================",
+        "",
+        "Files found: " + strconv.Itoa(len(files)),
+        "",
+    }
+
+    var filenames []string
+    for filename := range files {
+        filenames = append(filenames, filename)
+    }
+    sort.Strings(filenames)
+
+    var allDisplayFiles []string
+    sourceFiles := []string{}
+    configFiles := []string{}
+    docFiles := []string{}
+
+    for _, filename := range filenames {
+        ext := strings.ToLower(filepath.Ext(filename))
+        lowerName := strings.ToLower(filename)
+
+        switch {
+        case isSourceFile(ext):
+            sourceFiles = append(sourceFiles, filename)
+        case isConfigFile(filename) || strings.Contains(lowerName, "config") ||
+            strings.Contains(lowerName, "makefile") || strings.Contains(lowerName, "docker"):
+            configFiles = append(configFiles, filename)
+        case strings.Contains(lowerName, "readme") || strings.Contains(lowerName, "license") ||
+            strings.Contains(lowerName, "copying") || strings.Contains(lowerName, "credits") || 
+            strings.Contains(lowerName, "project"):
+            docFiles = append(docFiles, filename)
+        default:
+            configFiles = append(configFiles, filename)
+        }
+    }
+
+    // Собираем файлы в порядке отображения
+    if len(sourceFiles) > 0 {
+        lines = append(lines, "SOURCE FILES:")
+        lines = append(lines, "-------------")
+        for _, file := range sourceFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
+
+    if len(configFiles) > 0 {
+        lines = append(lines, "CONFIGURATION FILES:")
+        lines = append(lines, "---------------------")
+        for _, file := range configFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
+
+    if len(docFiles) > 0 {
+        lines = append(lines, "DOCUMENTATION:")
+        lines = append(lines, "--------------")
+        for _, file := range docFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
+
+    lines = append(lines, "Navigation: Use Ctrl+B to switch between files")
+    lines = append(lines, "Press Arrow Keys to navigate files and Enter to open")
+    lines = append(lines, "Press Tab on files allows you to select content that can be used for processing in LLM")
+    lines = append(lines, "Press Ctrl+O to open file by name, Ctrl+N for new file")
+
+    return lines, allDisplayFiles
 }
 
 // isSourceFile checks if file extension indicates a source code file
@@ -445,7 +551,7 @@ func isConfigFile(filename string) bool {
 // createCanvasesForProjectFiles creates canvases for each project file
 // createCanvasesForProjectFiles создает канвасы для каждого файла проекта
 func (e *Editor) createCanvasesForProjectFiles(files map[string]string, basePath string) {
-	canvasNum := 2 // Start from 2 since 1 is for overview
+	canvasNum := 2 
 
 	for filename, content := range files {
 		if canvasNum > MaxCanvases {
@@ -486,45 +592,121 @@ func (e *Editor) handleExitWithCanvasCheck() {
 }
 
 // buildProjectContext собирает контекст всего проекта
+// buildProjectContext собирает контекст всего проекта с исправленной логикой выбора файлов
 func (e *Editor) buildProjectContext(instruction string) *ProjectContext {
-	context := &ProjectContext{
-		Files:       make(map[string]string),
-		Instruction: instruction,
-		CurrentFile: e.filename,
-	}
+    context := &ProjectContext{
+        Files:       make(map[string]string),
+        Instruction: instruction,
+        CurrentFile: e.filename,
+    }
 
-	if e.githubProject != nil {
-		return e.buildGitHubProjectContext(instruction)
-	}
+    e.syncEditorToCanvas()
 
-	var structure []string
-	structure = append(structure, "PROJECT STRUCTURE:")
-	structure = append(structure, "=================")
+    var filesToInclude []string
+    
+    if selectedFiles := e.getSelectedFiles(); len(selectedFiles) > 0 {
+        filesToInclude = selectedFiles
+        context.Instruction = instruction + " [Processing selected files: " + strings.Join(e.getSelectedDisplayNames(), ", ") + "]"
+        
+        e.statusMessage(fmt.Sprintf("Preparing %d selected files for LLM", len(filesToInclude)))
+    } else {
+        for _, canvas := range e.canvases {
+            if canvas.filename != "" && len(canvas.lines) > 0 {
+                filename := e.getRelativePath(canvas.filename)
+                filesToInclude = append(filesToInclude, filename)
+            }
+        }
+        context.Instruction = instruction + " [Processing all project files]"
+    }
 
-	e.syncEditorToCanvas()
+    filesAdded := 0
+    for _, filename := range filesToInclude {
+        content, err := e.getFileContent(filename)
+        if err == nil && content != "" {
+            displayName := e.getDisplayFileName(filename)
+            context.Files[displayName] = content
+            filesAdded++
+        } else {
+            e.statusMessage(fmt.Sprintf("Warning: Could not read file %s", filename))
+        }
+    }
 
-	for canvasNum, canvas := range e.canvases {
-		if canvas.filename != "" {
-			filename := canvas.filename
-			if e.filename != "" {
-				if relPath, err := filepath.Rel(filepath.Dir(e.filename), filename); err == nil {
-					filename = relPath
-				}
-			} else if e.githubProject != nil && e.githubProject.LocalPath != "" {
-				if relPath, err := filepath.Rel(e.githubProject.LocalPath, filename); err == nil {
-					filename = relPath
-				}
-			}
+    var structure []string
+    structure = append(structure, "PROJECT STRUCTURE:")
+    structure = append(structure, "=================")
+    structure = append(structure, fmt.Sprintf("Files included: %d", filesAdded))
+    
+    for filename := range context.Files {
+        structure = append(structure, "• "+filename)
+    }
+    
+    context.ProjectStructure = strings.Join(structure, "\n")
 
-			structure = append(structure, fmt.Sprintf("Canvas %d: %s", canvasNum, filename))
-			content := strings.Join(canvas.lines, "\n")
-			context.Files[filename] = content
-		}
-	}
-	context.ProjectStructure = strings.Join(structure, "\n")
+    if filesAdded == 0 {
+        e.statusMessage("Warning: No file content found to send to LLM")
+    } else {
+        e.statusMessage(fmt.Sprintf("Prepared %d files for LLM processing", filesAdded))
+    }
 
-	return context
+    return context
 }
+
+// getFileContent возвращает содержимое файла из канвасов
+func (e *Editor) getFileContent(filename string) (string, error) {
+    for _, canvas := range e.canvases {
+        if canvas.filename == filename && len(canvas.lines) > 0 {
+            return strings.Join(canvas.lines, "\n"), nil
+        }
+    }
+    
+    baseName := filepath.Base(filename)
+    for _, canvas := range e.canvases {
+        if canvas.filename != "" && filepath.Base(canvas.filename) == baseName && len(canvas.lines) > 0 {
+            return strings.Join(canvas.lines, "\n"), nil
+        }
+    }
+    
+    return "", fmt.Errorf("file not found in canvases: %s", filename)
+}
+
+// getDisplayFileName возвращает отображаемое имя файла
+func (e *Editor) getDisplayFileName(filename string) string {
+    if e.filename != "" {
+        if relPath, err := filepath.Rel(filepath.Dir(e.filename), filename); err == nil {
+            return relPath
+        }
+    }
+    return filepath.Base(filename)
+}
+
+// getSelectedDisplayNames возвращает отображаемые имена выбранных файлов
+func (e *Editor) getSelectedDisplayNames() []string {
+    if e.fileSelection == nil {
+        return nil
+    }
+    
+    var names []string
+    for filename := range e.fileSelection.selectedFiles {
+        names = append(names, e.getDisplayFileName(filename))
+    }
+    sort.Strings(names)
+    return names
+}
+
+// getRelativePath возвращает относительный путь файла
+func (e *Editor) getRelativePath(fullPath string) string {
+    if e.filename != "" {
+        if relPath, err := filepath.Rel(filepath.Dir(e.filename), fullPath); err == nil {
+            return relPath
+        }
+    } else if e.githubProject != nil && e.githubProject.LocalPath != "" {
+        if relPath, err := filepath.Rel(e.githubProject.LocalPath, fullPath); err == nil {
+            return relPath
+        }
+    }
+    return filepath.Base(fullPath)
+}
+
 
 // buildGitHubProjectContext собирает контекст GitHub проекта
 func (e *Editor) buildGitHubProjectContext(instruction string) *ProjectContext {
@@ -560,39 +742,70 @@ func (e *Editor) buildGitHubProjectContext(instruction string) *ProjectContext {
 	return context
 }
 
-// formatProjectContextForLLM форматирует контекст проекта для отправки в LLM
+// formatProjectContextForLLM форматирует контекст проекта для отправки в LLM   
 func (e *Editor) formatProjectContextForLLM(context *ProjectContext) string {
-	var sb strings.Builder
+    var sb strings.Builder
 
-	sb.WriteString("PROJECT CONTEXT ANALYSIS REQUEST\n")
-	sb.WriteString("================================\n\n")
+    sb.WriteString("PROJECT CONTEXT ANALYSIS REQUEST\n")
+    sb.WriteString("================================\n\n")
 
-	sb.WriteString("INSTRUCTION:\n")
-	sb.WriteString(context.Instruction)
-	sb.WriteString("\n\n")
+    sb.WriteString("INSTRUCTION:\n")
+    sb.WriteString(context.Instruction)
+    sb.WriteString("\n\n")
 
-	sb.WriteString("PROJECT STRUCTURE:\n")
-	sb.WriteString(context.ProjectStructure)
-	sb.WriteString("\n\n")
+    sb.WriteString("PROJECT STRUCTURE:\n")
+    sb.WriteString(context.ProjectStructure)
+    sb.WriteString("\n\n")
 
-	sb.WriteString("CURRENTLY ACTIVE FILE:\n")
-	sb.WriteString(context.CurrentFile)
-	sb.WriteString("\n\n")
+    if context.CurrentFile != "" {
+        sb.WriteString("CURRENTLY ACTIVE FILE:\n")
+        sb.WriteString(context.CurrentFile)
+        sb.WriteString("\n\n")
+    }
 
-	sb.WriteString("PROJECT FILES CONTENT:\n")
-	sb.WriteString("======================\n\n")
+    sb.WriteString("PROJECT FILES CONTENT:\n")
+    sb.WriteString("======================\n\n")
 
-	for filename, content := range context.Files {
-		sb.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
-		sb.WriteString(content)
-		sb.WriteString("\n\n")
-	}
+    fileCount := 0
+    for filename, content := range context.Files {
+        if strings.TrimSpace(content) == "" {
+            continue
+        }
+        
+        sb.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
+        sb.WriteString(content)
+        sb.WriteString("\n\n")
+        fileCount++
+    }
 
-	sb.WriteString("END OF PROJECT CONTEXT\n")
-	sb.WriteString("======================\n\n")
-	sb.WriteString("Please analyze the entire project context and provide a comprehensive response based on the instruction above.")
+    if fileCount == 0 {
+        sb.WriteString("No file content available.\n\n")
+    }
 
-	return sb.String()
+    sb.WriteString("END OF PROJECT CONTEXT\n")
+    sb.WriteString("======================\n\n")
+    
+    sb.WriteString("Please analyze the provided project context and provide a comprehensive response based on the instruction above.")
+    sb.WriteString(" Focus on the actual code and file content provided.")
+
+    return sb.String()
+}
+
+// validateLLMResponse проверяет ответ LLM перед отправкой в редактор
+func (e *Editor) validateLLMResponse(response string) string {
+    response = strings.TrimSpace(response)
+    
+    if response == "" {
+        return "LLM returned an empty response. Please try again with a different prompt or check the LLM service."
+    }
+    
+    if strings.Contains(strings.ToLower(response), "error") && 
+       (strings.Contains(strings.ToLower(response), "failed to") || 
+        strings.Contains(strings.ToLower(response), "unable to")) {
+        e.statusMessage("Warning: LLM response may contain error indicators")
+    }
+    
+    return response
 }
 
 // printVersion prints the editor version.
