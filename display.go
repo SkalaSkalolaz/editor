@@ -278,6 +278,7 @@ func (e *Editor) llmPromptWithPrevShow() {
 	e.prompt = nil
 }
 
+
 // cursorDisplayPosition calculates the display position of the cursor.
 // cursorDisplayPosition вычисляет позицию отображения курсора.
 func (e *Editor) cursorDisplayPosition() (int, int, int) {
@@ -357,6 +358,202 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 	offsetInSegCells += e.lineNumbersWidth
 	return displayRow, len(segs) - 1, offsetInSegCells
 }
+
+// shouldTriggerAutoComplete проверяет условие: курсор не в начале строки,
+// сразу слева пробел, а перед ним не пробел; и режим автодополнения включен.
+func (e *Editor) shouldTriggerAutoComplete() bool {
+    if !e.autoCompleteMode {
+        return false
+    }
+    if e.autoCompleteState != nil && e.autoCompleteState.active {
+        return false
+    }
+    if e.inProjectOverview {
+        return false
+    }
+    if e.cy < 0 || e.cy >= len(e.lines) {
+        return false
+    }
+
+    lineRunes := []rune(e.lines[e.cy])
+    if e.cx == 0 {
+        return false
+    }
+    if e.cx > len(lineRunes) {
+        return false
+    }
+
+    if !unicode.IsSpace(lineRunes[e.cx-1]) {
+        return false
+    }
+    if e.cx-2 < 0 {
+        return false
+    }
+    if unicode.IsSpace(lineRunes[e.cx-2]) {
+        return false
+    }
+
+    return true
+}
+
+// requestAutoComplete собирает расширенный контекст и асинхронно посылает запрос в LLM
+func (e *Editor) requestAutoComplete() {
+    if !e.autoCompleteMode {
+        return
+    }
+    if e.autoCompleteState == nil {
+        e.autoCompleteState = &AutoCompleteState{}
+    }
+    e.autoCompleteState.active = true
+    e.autoCompleteState.suggestion = ""
+    e.autoCompleteState.fetched = false
+    e.autoCompleteState.requestedAt = time.Now()
+    e.render()
+
+    prevContext, currLine, nextContext := e.getExtendedAutoCompleteContext()
+
+    lang := "unknown"
+    if e.language != "" {
+        lang = string(e.language)
+    }
+
+    prompt := fmt.Sprintf("You are a concise code completion assistant.\nLanguage: %s\n\nContext (previous lines):\n%s\n\nCurrent line (before cursor):\n%s\n\nContext (next lines):\n%s\n\nProvide ONLY the completion/text that should be inserted to finish the current line or construct. No explanations, no commentary. Keep it minimal and syntactically correct. Consider the code that comes after the cursor.",
+        lang,
+        prevContext,
+        currLine,
+        nextContext,
+    )
+
+    e.autoCompleteState.context = prompt
+
+    go func(p string) {
+        resp, err := SendMessageToLLM(p, e.llmProvider, e.llmModel, e.llmKey)
+        if err != nil {
+            e.showError("Auto-complete LLM error: " + err.Error())
+            e.autoCompleteState.active = false
+            e.render()
+            return
+        }
+
+        resp = e.validateLLMResponse(resp)
+
+        if content, perr := extractContentFromPossibleJSON(resp); perr == nil {
+            resp = content
+        }
+
+        resp = strings.TrimRight(resp, "\n\r ")
+
+        e.autoCompleteState.suggestion = resp
+        e.autoCompleteState.fetched = true
+        e.render()
+    }(prompt)
+}
+
+// getExtendedAutoCompleteContext собирает расширенный контекст для автодополнения
+// (строки до и после курсора)
+func (e *Editor) getExtendedAutoCompleteContext() (string, string, string) {
+    startBefore := e.cy - 30
+    if startBefore < 0 {
+        startBefore = 0
+    }
+    prev := make([]string, 0, e.cy-startBefore)
+    for i := startBefore; i < e.cy; i++ {
+        prev = append(prev, e.lines[i])
+    }
+
+    endAfter := e.cy + 10
+    if endAfter >= len(e.lines) {
+        endAfter = len(e.lines) - 1
+    }
+    next := make([]string, 0, endAfter-e.cy)
+    for i := e.cy + 1; i <= endAfter; i++ {
+        next = append(next, e.lines[i])
+    }
+
+    currLine := ""
+    if e.cy >= 0 && e.cy < len(e.lines) {
+        runes := []rune(e.lines[e.cy])
+        if e.cx <= len(runes) {
+            currLine = string(runes[:e.cx])
+        } else {
+            currLine = e.lines[e.cy]
+        }
+    }
+
+    return strings.Join(prev, "\n"), currLine, strings.Join(next, "\n")
+}
+
+// acceptAutoComplete вставляет подсказку (если она есть) в позицию курсора.
+func (e *Editor) acceptAutoComplete() {
+    if e.autoCompleteState == nil || !e.autoCompleteState.active {
+        return
+    }
+    s := e.autoCompleteState.suggestion
+    if strings.TrimSpace(s) == "" {
+        e.autoCompleteState.active = false
+        e.render()
+        return
+    }
+    e.insertTextAtCursor(s)
+    e.autoCompleteState.active = false
+    e.dirty = true
+    e.render()
+}
+
+// cancelAutoComplete отменяет текущую подсказку.
+func (e *Editor) cancelAutoComplete() {
+    if e.autoCompleteState != nil {
+        e.autoCompleteState.active = false
+    }
+    e.render()
+}
+
+// renderAutoCompleteSuggestion рисует ghost-текст (серым) справа от курсора.
+// Принимает display / contentRows для определения координат.
+func (e *Editor) renderAutoCompleteSuggestion(display []DisplayRow, contentRows int) {
+    if e.autoCompleteState == nil || !e.autoCompleteState.active {
+        return
+    }
+    curDisplayRow, _, cursorInSeg := e.cursorDisplayPosition()
+    cursorY := curDisplayRow - e.offsetY + 1
+    if cursorY < 1 || cursorY >= e.contentHeight-2 {
+        return
+    }
+
+    suggestion := e.autoCompleteState.suggestion
+    if suggestion == "" && !e.autoCompleteState.fetched {
+        suggestion = "..."
+    }
+    if suggestion == "" {
+        return
+    }
+    firstLine := suggestion
+    if idx := strings.IndexAny(suggestion, "\r\n"); idx >= 0 {
+        firstLine = suggestion[:idx]
+    }
+
+    x := cursorInSeg
+    st := styleComment
+    runes := []rune(firstLine)
+    for _, r := range runes {
+        rw := runewidth.RuneWidth(r)
+        if rw <= 0 {
+            rw = 1
+        }
+        if x+rw > e.contentWidth {
+            break
+        }
+        for k := 0; k < rw && x < e.contentWidth; k++ {
+            drawRune := r
+            if k > 0 {
+                drawRune = ' '
+            }
+            e.screen.SetContent(x+k, cursorY, drawRune, nil, st)
+        }
+        x += rw
+    }
+}
+
 
 // ensureVisible ensures the cursor is visible on the screen.
 // ensureVisible обеспечивает видимость курсора на экране.
@@ -1545,7 +1742,24 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 	}
 	shiftPressed := ev.Modifiers()&tcell.ModShift != 0
 
+	if e.autoCompleteState != nil && e.autoCompleteState.active {
+        switch ev.Key() {
+        case tcell.KeyEnter:
+            e.acceptAutoComplete()
+            return
+        case tcell.KeyEsc:
+            e.cancelAutoComplete()
+            return
+        default:
+            e.cancelAutoComplete()
+        }
+    }
+
 	if ev.Rune() == '\t' || ev.Key() == tcell.KeyTab {
+		if e.autoCompleteMode && e.shouldTriggerAutoComplete() {
+            e.requestAutoComplete()
+            return
+        }
 		completion := e.findKeywordCompletion()
 		if completion != "" {
 			e.insertTextAtCursor(completion)
@@ -2558,6 +2772,11 @@ func (e *Editor) render() {
             }
         }
     }
+
+	if e.autoCompleteState != nil && e.autoCompleteState.active {
+        e.renderAutoCompleteSuggestion(display, contentRows)
+    }
+
 
 	e.highlightSearchMatches(display, contentRows)
 
