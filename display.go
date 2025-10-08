@@ -1818,13 +1818,23 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		return
 	}
 	if ev.Key() == tcell.KeyCtrlB {
-		e.switchToNextCanvas()
-		e.ctrlAState = false
-		e.ctrlLState = false
-		e.endSelection()
-		return
-	}
-
+        if e.isProjectMode() {
+            if e.inProjectOverview {
+                e.switchToNextCanvas()
+            } else {
+                prevFilename := e.filename
+                e.returnToProjectOverview(prevFilename)
+            }
+        } else {
+            e.switchToNextCanvas()
+        }
+    
+        e.ctrlAState = false
+        e.ctrlLState = false
+        e.endSelection()
+        return
+    }
+    
     	if e.inProjectOverview && len(e.projectFiles) > 0 {
         switch ev.Key() {
         case tcell.KeyUp:
@@ -3744,6 +3754,53 @@ func (e *Editor) ensureFileVisibleInOverview() {
         e.cy = targetLine
     }
 }
+
+// returnToProjectOverview возвращает пользователя в обзор проекта (canvas 1),
+// подсвечивая файл, который был открыт перед возвратом (если удаётся сопоставить).
+// prevFilename — полный путь или имя файла текущего канваса (до переключения).
+func (e *Editor) returnToProjectOverview(prevFilename string) {
+    e.syncEditorToCanvas()
+
+    if _, exists := e.canvases[1]; exists {
+        e.currentCanvas = 1
+        e.syncCanvasToEditor()
+        e.inProjectOverview = true
+    } else {
+        found := false
+        for k, canvas := range e.canvases {
+            if canvas != nil && len(canvas.lines) > 0 {
+                if strings.Contains(strings.Join(canvas.lines, "\n"), "PROJECT OVERVIEW") {
+                    e.currentCanvas = k
+                    e.syncCanvasToEditor()
+                    e.inProjectOverview = true
+                    found = true
+                    break
+                }
+            }
+        }
+        if !found {
+            e.switchToNextCanvas()
+            return
+        }
+    }
+
+    e.currentFileIndex = -1
+    prevBase := filepath.Base(prevFilename)
+    for idx, f := range e.projectFiles {
+        if f == prevFilename || filepath.Base(f) == prevBase || strings.HasSuffix(prevFilename, f) {
+            e.currentFileIndex = idx
+            break
+        }
+    }
+    if e.currentFileIndex < 0 && len(e.projectFiles) > 0 {
+        e.currentFileIndex = 0
+    }
+
+    e.ensureFileVisibleInOverview()
+    e.statusMessage("Returned to project overview")
+    e.render()
+}
+
 
 // openFileFromOverview открывает файл из обзора проекта
 func (e *Editor) openFileFromOverview(filename string) {
