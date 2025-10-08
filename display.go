@@ -114,12 +114,14 @@ func (e *Editor) refreshSize() {
 	e.contentHeight = h
 	e.width = e.contentWidth
 	e.height = e.contentHeight
+	
 	if e.structurePanelWidth <= 0 {
-		e.structurePanelWidth = 4 //24
+		e.structurePanelWidth = 4
 	}
 	if e.structurePanelWidth > e.contentWidth/3 {
 		e.structurePanelWidth = e.contentWidth / 3
 	}
+	
 	if e.showLineNumbers {
 		maxLineNum := len(e.lines)
 		e.lineNumbersWidth = len(strconv.Itoa(maxLineNum)) + LineNumbersPadding
@@ -129,7 +131,9 @@ func (e *Editor) refreshSize() {
 	} else {
 		e.lineNumbersWidth = 0
 	}
+	
 	canvasAvailable := e.contentWidth - e.lineNumbersWidth
+	
 	if e.showStructurePanel {
 		if canvasAvailable-e.structurePanelWidth < 10 {
 			if canvasAvailable > 10 {
@@ -161,6 +165,7 @@ func (e *Editor) wrapLine(line string) []string {
 	var currentWidth int
 	var start int
 	tabWidth := 4
+	
 	wrapWidth := e.canvasWidth
 	if wrapWidth <= 0 {
 		wrapWidth = 1
@@ -340,7 +345,8 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 				}
 			}
 			displayRow := totalBefore + segIndex
-			return displayRow, segIndex, offsetInSegCells
+			cursorXWithNumbers := offsetInSegCells + e.lineNumbersWidth
+			return displayRow, segIndex, cursorXWithNumbers
 		}
 		segmentStartRune = segEndRune
 	}
@@ -355,8 +361,8 @@ func (e *Editor) cursorDisplayPosition() (int, int, int) {
 			offsetInSegCells += runewidth.RuneWidth(r)
 		}
 	}
-	offsetInSegCells += e.lineNumbersWidth
-	return displayRow, len(segs) - 1, offsetInSegCells
+	cursorXWithNumbers := offsetInSegCells + e.lineNumbersWidth
+	return displayRow, len(segs) - 1, cursorXWithNumbers
 }
 
 // shouldTriggerAutoComplete проверяет условие: курсор не в начале строки,
@@ -554,7 +560,6 @@ func (e *Editor) renderAutoCompleteSuggestion(display []DisplayRow, contentRows 
     }
 }
 
-
 // ensureVisible ensures the cursor is visible on the screen.
 // ensureVisible обеспечивает видимость курсора на экране.
 func (e *Editor) ensureVisible() {
@@ -580,11 +585,19 @@ func (e *Editor) ensureVisible() {
 		}
 	}
 
-	dispIdx, _, _ := e.cursorDisplayPosition()
+	dispIdx, _, cursorX := e.cursorDisplayPosition()
 	visibleRows := e.contentHeight - 4
 	if visibleRows < 1 {
 		visibleRows = 1
 	}
+	
+	visibleCols := e.contentWidth - e.lineNumbersWidth
+	if cursorX >= e.contentWidth {
+		e.offsetX = cursorX - visibleCols + 1
+	} else if cursorX < e.lineNumbersWidth {
+		e.offsetX = 0
+	}
+	
 	if dispIdx < e.offsetY {
 		e.offsetY = dispIdx
 	} else if dispIdx >= e.offsetY+visibleRows {
@@ -1754,8 +1767,28 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
             e.cancelAutoComplete()
         }
     }
-
+	if ev.Key() == tcell.KeyEscape {
+        if e.bracketHighlightState != nil && e.bracketHighlightState.active {
+            e.bracketHighlightState.active = false
+            e.render()
+            return
+        }
+    }
 	if ev.Rune() == '\t' || ev.Key() == tcell.KeyTab {
+		if e.showLineNumbers && e.showStructurePanel {
+            if e.bracketHighlightState == nil {
+                e.bracketHighlightState = &BracketHighlightState{}
+            }
+            
+            pair := e.bracketMatcher.getBracketAtCursor()
+            if pair != nil {
+                e.bracketHighlightState.active = true
+                e.bracketHighlightState.bracketPair = pair
+                e.bracketHighlightState.startTime = time.Now()
+                e.render()
+                return
+            }
+        }
 		if e.autoCompleteMode && e.shouldTriggerAutoComplete() {
             e.requestAutoComplete()
             return
@@ -2566,7 +2599,12 @@ func (e *Editor) render() {
 	}
 
 	e.renderLineNumbers(display, contentRows)
-
+	if e.bracketHighlightState != nil && e.bracketHighlightState.active {
+        e.highlightBracketLineNumbers(display, contentRows)
+    }
+    if e.bracketHighlightState != nil && e.bracketHighlightState.active {
+        e.renderBracketHighlight(display, contentRows)
+    }
 	var selStartLine, selStartCol, selEndLine, selEndCol int
 	if e.selecting {
 		selStartLine, selStartCol, selEndLine, selEndCol = e.getSelectionRange()
@@ -2780,114 +2818,35 @@ func (e *Editor) render() {
 
 	e.highlightSearchMatches(display, contentRows)
 
-	if e.bracketMatcher != nil {
-		matchingPair := e.bracketMatcher.getBracketAtCursor()
-		if matchingPair != nil {
-			openDisplayRow := 0
-			openSegIndex := 0
-			openCursorInSeg := 0
-
-			closeDisplayRow := 0
-			closeSegIndex := 0
-			closeCursorInSeg := 0
-			totalBefore := 0
-			for i := 0; i < matchingPair.OpenLine; i++ {
-				totalBefore += len(e.wrapLine(e.lines[i]))
-			}
-			segs := e.wrapLine(e.lines[matchingPair.OpenLine])
-			segmentStartRune := 0
-			for segIndex, seg := range segs {
-				segRunes := []rune(seg)
-				segEndRune := segmentStartRune + len(segRunes)
-				if matchingPair.OpenCol >= segmentStartRune && matchingPair.OpenCol <= segEndRune {
-					offsetInSegRunes := matchingPair.OpenCol - segmentStartRune
-					offsetInSegCells := 0
-					for i := 0; i < offsetInSegRunes; i++ {
-						r := segRunes[i]
-						if r == '\t' {
-							offsetInSegCells += 4 - (offsetInSegCells % 4)
-						} else {
-							offsetInSegCells += runewidth.RuneWidth(r)
-						}
-					}
-					openDisplayRow = totalBefore + segIndex
-					openSegIndex = segIndex
-					openCursorInSeg = offsetInSegCells
-					break
-				}
-				segmentStartRune = segEndRune
-			}
-
-			totalBefore = 0
-			for i := 0; i < matchingPair.CloseLine; i++ {
-				totalBefore += len(e.wrapLine(e.lines[i]))
-			}
-			segs = e.wrapLine(e.lines[matchingPair.CloseLine])
-			segmentStartRune = 0
-			for segIndex, seg := range segs {
-				segRunes := []rune(seg)
-				segEndRune := segmentStartRune + len(segRunes)
-				if matchingPair.CloseCol >= segmentStartRune && matchingPair.CloseCol <= segEndRune {
-					offsetInSegRunes := matchingPair.CloseCol - segmentStartRune
-					offsetInSegCells := 0
-					for i := 0; i < offsetInSegRunes; i++ {
-						r := segRunes[i]
-						if r == '\t' {
-							offsetInSegCells += 4 - (offsetInSegCells % 4)
-						} else {
-							offsetInSegCells += runewidth.RuneWidth(r)
-						}
-					}
-					closeDisplayRow = totalBefore + segIndex
-					closeSegIndex = segIndex
-					closeCursorInSeg = offsetInSegCells
-					break
-				}
-				segmentStartRune = segEndRune
-			}
-			openY := openDisplayRow - e.offsetY + 1
-			closeY := closeDisplayRow - e.offsetY + 1
-
-			if openY >= 1 && openY < e.contentHeight-3 {
-				for i := 0; i < contentRows; i++ {
-					di := e.offsetY + i
-					if di == openDisplayRow {
-						row := display[di]
-						if openSegIndex == row.segIndex {
-							bracketStyle := e.bracketMatcher.getBracketHighlightStyle()
-							if matchingPair.OpenLine < len(e.lines) {
-								lineRunes := []rune(e.lines[matchingPair.OpenLine])
-								if matchingPair.OpenCol < len(lineRunes) {
-									e.screen.SetContent(openCursorInSeg, openY, lineRunes[matchingPair.OpenCol], nil, bracketStyle)
-								}
-							}
-						}
-						break
-					}
-				}
-			}
-
-			if closeY >= 1 && closeY < e.contentHeight-3 {
-				for i := 0; i < contentRows; i++ {
-					di := e.offsetY + i
-					if di == closeDisplayRow {
-						row := display[di]
-						if closeSegIndex == row.segIndex {
-							bracketStyle := e.bracketMatcher.getBracketHighlightStyle()
-							if matchingPair.CloseLine < len(e.lines) {
-								lineRunes := []rune(e.lines[matchingPair.CloseLine])
-								if matchingPair.CloseCol < len(lineRunes) {
-									e.screen.SetContent(closeCursorInSeg, closeY, lineRunes[matchingPair.CloseCol], nil, bracketStyle)
-								}
-							}
-						}
-						break
-					}
-				}
-			}
-		}
-	}
-
+    if e.bracketMatcher != nil {
+        matchingPair := e.bracketMatcher.getBracketAtCursor()
+        if matchingPair != nil {
+            openX, openY, openVisible := e.getScreenPosition(matchingPair.OpenLine, matchingPair.OpenCol)
+            
+            closeX, closeY, closeVisible := e.getScreenPosition(matchingPair.CloseLine, matchingPair.CloseCol)
+            
+            if openVisible {
+                bracketStyle := e.bracketMatcher.getBracketHighlightStyle()
+                if matchingPair.OpenLine < len(e.lines) {
+                    lineRunes := []rune(e.lines[matchingPair.OpenLine])
+                    if matchingPair.OpenCol < len(lineRunes) {
+                        e.screen.SetContent(openX, openY, lineRunes[matchingPair.OpenCol], nil, bracketStyle)
+                    }
+                }
+            }
+    
+            if closeVisible {
+                bracketStyle := e.bracketMatcher.getBracketHighlightStyle()
+                if matchingPair.CloseLine < len(e.lines) {
+                    lineRunes := []rune(e.lines[matchingPair.CloseLine])
+                    if matchingPair.CloseCol < len(lineRunes) {
+                        e.screen.SetContent(closeX, closeY, lineRunes[matchingPair.CloseCol], nil, bracketStyle)
+                    }
+                }
+            }
+        }
+    }
+    
 	e.markSearchLinesInNumbers(display, contentRows)
 
 	curDisplayRow, _, cursorInSeg := e.cursorDisplayPosition()
@@ -3096,6 +3055,96 @@ func (e *Editor) render() {
 	}
 
 	e.screen.Show()
+}
+
+// highlightBracketLineNumbers подсвечивает номера строк с парными скобками
+func (e *Editor) highlightBracketLineNumbers(display []DisplayRow, contentRows int) {
+    if e.bracketHighlightState == nil || !e.bracketHighlightState.active {
+        return
+    }
+
+    pair := e.bracketHighlightState.bracketPair
+    if pair == nil {
+        return
+    }
+
+    highlightStyle := tcell.StyleDefault.
+        Background(tcell.ColorRed).
+        Foreground(tcell.ColorWhite)
+
+    bracketLines := map[int]bool{
+        pair.OpenLine: true,
+        pair.CloseLine: true,
+    }
+
+    for i := 0; i < contentRows; i++ {
+        di := e.offsetY + i
+        if di >= len(display) {
+            continue
+        }
+
+        row := display[di]
+        if bracketLines[row.lineIndex] {
+            lineNumber := row.lineIndex + 1
+            lineNumStr := strconv.Itoa(lineNumber)
+            padding := e.lineNumbersWidth - len(lineNumStr) - LineNumbersPadding
+
+            for x := 0; x < e.lineNumbersWidth; x++ {
+                e.screen.SetContent(x, i+1, ' ', nil, highlightStyle)
+            }
+
+            xPos := padding
+            for _, r := range lineNumStr {
+                if xPos >= e.lineNumbersWidth {
+                    break
+                }
+                e.screen.SetContent(xPos, i+1, r, nil, highlightStyle)
+                xPos++
+            }
+
+            if e.lineNumbersWidth > 1 {
+                separatorX := e.lineNumbersWidth - 1
+                e.screen.SetContent(separatorX, i+1, '│', nil, highlightStyle)
+            }
+        }
+    }
+}
+
+// renderBracketHighlight отображает подсветку парных скобок
+func (e *Editor) renderBracketHighlight(display []DisplayRow, contentRows int) {
+    if e.bracketHighlightState == nil || !e.bracketHighlightState.active {
+        return
+    }
+
+    pair := e.bracketHighlightState.bracketPair
+    if pair == nil {
+        return
+    }
+
+    bracketStyle := e.bracketMatcher.getBracketHighlightInverseStyle()
+
+    brackets := []struct {
+        line int
+        col  int
+    }{
+        {pair.OpenLine, pair.OpenCol},
+        {pair.CloseLine, pair.CloseCol},
+    }
+
+    for _, bracket := range brackets {
+        xPos, yPos, visible := e.getScreenPosition(bracket.line, bracket.col)
+        
+        if visible && yPos >= 1 && yPos < e.contentHeight-3 {
+            if bracket.line < len(e.lines) {
+                lineRunes := []rune(e.lines[bracket.line])
+                if bracket.col < len(lineRunes) {
+                    bracketRune := lineRunes[bracket.col]
+                    
+                    e.screen.SetContent(xPos, yPos, bracketRune, nil, bracketStyle)
+                }
+            }
+        }
+    }
 }
 
 func (e *Editor) startSelection() {
@@ -3873,3 +3922,46 @@ func (e *Editor) handleFileSelection() {
     }
 }
 
+// getScreenPosition возвращает экранные координаты для позиции в тексте
+// с учетом нумерации строк и переноса текста
+func (e *Editor) getScreenPosition(lineIdx, colIdx int) (int, int, bool) {
+    if lineIdx < 0 || lineIdx >= len(e.lines) {
+        return 0, 0, false
+    }
+
+    totalBefore := 0
+    for i := 0; i < lineIdx; i++ {
+        totalBefore += len(e.wrapLine(e.lines[i]))
+    }
+    
+    segs := e.wrapLine(e.lines[lineIdx])
+    segmentStartRune := 0
+    
+    for segIndex, seg := range segs {
+        segRunes := []rune(seg)
+        segEndRune := segmentStartRune + len(segRunes)
+        
+        if colIdx >= segmentStartRune && colIdx <= segEndRune {
+            offsetInSegRunes := colIdx - segmentStartRune
+            offsetInSegCells := 0
+            
+            for i := 0; i < offsetInSegRunes; i++ {
+                r := segRunes[i]
+                if r == '\t' {
+                    offsetInSegCells += 4 - (offsetInSegCells % 4)
+                } else {
+                    offsetInSegCells += runewidth.RuneWidth(r)
+                }
+            }
+            
+            displayRow := totalBefore + segIndex
+            screenY := displayRow - e.offsetY + 1
+            screenX := offsetInSegCells + e.lineNumbersWidth
+            
+            return screenX, screenY, true
+        }
+        segmentStartRune = segEndRune
+    }
+    
+    return 0, 0, false
+}
