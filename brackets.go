@@ -197,33 +197,47 @@ func (bm *BracketMatcher) findOpeningBracket(startLine, startCol int, opening, c
 	return nil
 }
 
-// getBracketAtCursor returns the bracket pair at the current cursor position
+// getBracketAtCursor возвращает пару скобок для текущей позиции курсора
 func (bm *BracketMatcher) getBracketAtCursor() *BracketPair {
-	if bm.editor.cy < 0 || bm.editor.cy >= len(bm.editor.lines) {
-		return nil
-	}
-	
-	line := bm.editor.lines[bm.editor.cy]
-	runes := []rune(line)
-	
-	if bm.editor.cx >= 0 && bm.editor.cx < len(runes) {
-		pair := bm.findMatchingBracket(bm.editor.cy, bm.editor.cx)
-		if pair != nil {
-			return pair
-		}
-	}
-	
-	if bm.editor.cx > 0 && bm.editor.cx <= len(runes) {
-		pair := bm.findMatchingBracket(bm.editor.cy, bm.editor.cx-1)
-		if pair != nil {
-			return pair
-		}
-	}
-	
-	return nil
+    if bm.editor.cy < 0 || bm.editor.cy >= len(bm.editor.lines) {
+        return nil
+    }
+    
+    line := bm.editor.lines[bm.editor.cy]
+    runes := []rune(line)
+    
+    checkPositions := []int{bm.editor.cx}
+    if bm.editor.cx > 0 {
+        checkPositions = append(checkPositions, bm.editor.cx-1)
+    }
+    if bm.editor.cx < len(runes)-1 {
+        checkPositions = append(checkPositions, bm.editor.cx+1)
+    }
+    
+    for _, pos := range checkPositions {
+        if pos >= 0 && pos < len(runes) {
+            char := runes[pos]
+            if char == '{' || char == '}' {
+                pair := bm.findMatchingBracket(bm.editor.cy, pos)
+                if pair != nil {
+                    return pair
+                }
+            }
+        }
+    }
+    
+    return nil
 }
 
 // getBracketHighlightStyle returns the style for highlighting matched brackets
 func (bm *BracketMatcher) getBracketHighlightStyle() tcell.Style {
 	return tcell.StyleDefault.Foreground(tcell.ColorYellow).Background(tcell.ColorBlue)
+}
+
+// getBracketHighlightInverseStyle возвращает инверсный стиль для подсветки скобок
+func (bm *BracketMatcher) getBracketHighlightInverseStyle() tcell.Style {
+    return tcell.StyleDefault.
+        Background(tcell.ColorWhite).
+        Foreground(tcell.ColorBlack).
+        Bold(true)
 }
