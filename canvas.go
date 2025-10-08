@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -28,6 +29,9 @@ type Canvas struct {
 // switchToNextCanvas переключается на следующий канвас по кругу.
 func (e *Editor) switchToNextCanvas() {
 	e.syncEditorToCanvas()
+    if e.inProjectOverview {
+        e.inProjectOverview = false
+    }
 	nextCanvas := e.currentCanvas + 1
 	if nextCanvas > MaxCanvases {
 		nextCanvas = 1
@@ -51,6 +55,12 @@ func (e *Editor) switchToNextCanvas() {
 	}
 }
 
+// updateProjectOverviewState обновляет состояние просмотра проекта
+func (e *Editor) updateProjectOverviewState() {
+    e.inProjectOverview = (e.currentCanvas == 1 && len(e.lines) > 0 && 
+        strings.Contains(strings.Join(e.lines, "\n"), "PROJECT OVERVIEW"))
+}
+
 // syncCanvasToEditor синхронизирует текущий канвас с редактором.
 func (e *Editor) syncCanvasToEditor() {
 	canvas, exists := e.canvases[e.currentCanvas]
@@ -71,6 +81,7 @@ func (e *Editor) syncCanvasToEditor() {
 	if canvas.githubProject != nil {
 		e.githubProject = canvas.githubProject
 	}
+	e.updateProjectOverviewState()
 }
 
 // syncEditorToCanvas синхронизирует редактор с текущим канвасом.
@@ -168,7 +179,6 @@ func (c *Canvas) getDisplayName() string {
 	return c.filename
 }
 
-// canvas.go - добавляем функцию для получения списка файлов проекта
 // getProjectFiles возвращает map всех файлов проекта из всех канвасов
 func (e *Editor) getProjectFiles() map[string]string {
 	files := make(map[string]string)
@@ -199,4 +209,22 @@ func (e *Editor) isProjectMode() bool {
 	}
 
 	return false
+}
+
+// findCanvasByFilename ищет канвас по имени файла
+func (e *Editor) findCanvasByFilename(filename string) int {
+    for canvasNum, canvas := range e.canvases {
+        if canvas.filename != "" {
+            baseName := filepath.Base(canvas.filename)
+            if baseName == filename || canvas.filename == filename {
+                return canvasNum
+            }
+            if e.filename != "" {
+                if relPath, err := filepath.Rel(filepath.Dir(e.filename), canvas.filename); err == nil && relPath == filename {
+                    return canvasNum
+                }
+            }
+        }
+    }
+    return -1
 }
