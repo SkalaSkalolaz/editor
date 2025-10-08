@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "0.9.17"
+const Version = "1.0.0"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -73,6 +73,14 @@ type Editor struct {
 	fileSelection *FileSelection
 	autoCompleteMode  bool
     autoCompleteState *AutoCompleteState
+	bracketHighlightState *BracketHighlightState
+}
+
+// BracketHighlightState управляет состоянием подсветки парных скобок
+type BracketHighlightState struct {
+    active        bool
+    bracketPair   *BracketPair
+    startTime     time.Time
 }
 
 // AutoCompleteState хранит текущее состояние inline-autocomplete
@@ -160,6 +168,9 @@ func NewEditor(path string, provider string, model string) *Editor {
 		language:      LangUnknown,
 		canvases:      make(map[int]*Canvas),
 		currentCanvas: 1,
+		bracketHighlightState: &BracketHighlightState{
+            active: false,
+        },
 	}
 	canvas := &Canvas{
 		filename: path,
