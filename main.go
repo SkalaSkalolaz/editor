@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.0.0"
+const Version = "1.0.1"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -226,7 +226,6 @@ func NewEditor(path string, provider string, model string) *Editor {
 	return e
 }
 
-
 // readProjectFiles reads all supported files from a directory
 // readProjectFiles читает все поддерживаемые файлы из директории
 func readProjectFiles(dirPath string) (map[string]string, error) {
@@ -245,6 +244,9 @@ func readProjectFiles(dirPath string) (map[string]string, error) {
 		".html":  true, ".htm": true,
 		".lisp": true, ".lsp": true, ".cl": true, ".el": true,
 		".uml": true, ".png": true,
+		".txt": true, ".log": true, ".csv": true, ".tsv": true, ".json": true, ".md": true, ".xml": true,
+		".yaml": true, ".ini": true, ".cfg": true, ".env": true, ".nfo": true, ".css": true, ".bat": true,
+		".sh": true, 
 	}
 
 	projectFiles := map[string]bool{
@@ -380,86 +382,6 @@ func NewEditorWithProject(dirPath string, provider string, model string) *Editor
 	return e
 }
 
-// createProjectOverview creates a formatted overview of project files
-// createProjectOverview создает форматированный обзор файлов проекта
-func createProjectOverview(files map[string]string) []string {
-    lines := []string{
-        "PROJECT OVERVIEW",
-        "================",
-        "",
-        "Files found: " + strconv.Itoa(len(files)),
-        "",
-    }
-
-    var filenames []string
-    for filename := range files {
-        filenames = append(filenames, filename)
-    }
-    sort.Strings(filenames)
-
-    sourceFiles := []string{}
-    configFiles := []string{}
-    docFiles := []string{}
-
-    for _, filename := range filenames {
-        ext := strings.ToLower(filepath.Ext(filename))
-        lowerName := strings.ToLower(filename)
-
-        switch {
-        case isSourceFile(ext):
-            sourceFiles = append(sourceFiles, filename)
-        case isConfigFile(filename) || strings.Contains(lowerName, "config") ||
-            strings.Contains(lowerName, "makefile") || strings.Contains(lowerName, "docker"):
-            configFiles = append(configFiles, filename)
-        case strings.Contains(lowerName, "readme") || strings.Contains(lowerName, "license") ||
-            strings.Contains(lowerName, "copying") || strings.Contains(lowerName, "credits") || 
-            strings.Contains(lowerName, "project"):
-            docFiles = append(docFiles, filename)
-        default:
-            configFiles = append(configFiles, filename)
-        }
-    }
-
-    allDisplayFiles := []string{}
-    
-    if len(sourceFiles) > 0 {
-        lines = append(lines, "SOURCE FILES:")
-        lines = append(lines, "-------------")
-        for _, file := range sourceFiles {
-            lines = append(lines, "  • "+file)
-            allDisplayFiles = append(allDisplayFiles, file)
-        }
-        lines = append(lines, "")
-    }
-
-    if len(configFiles) > 0 {
-        lines = append(lines, "CONFIGURATION FILES:")
-        lines = append(lines, "---------------------")
-        for _, file := range configFiles {
-            lines = append(lines, "  • "+file)
-            allDisplayFiles = append(allDisplayFiles, file)
-        }
-        lines = append(lines, "")
-    }
-
-    if len(docFiles) > 0 {
-        lines = append(lines, "DOCUMENTATION:")
-        lines = append(lines, "--------------")
-        for _, file := range docFiles {
-            lines = append(lines, "  • "+file)
-            allDisplayFiles = append(allDisplayFiles, file)
-        }
-        lines = append(lines, "")
-    }
-
-    lines = append(lines, "Navigation: Use Ctrl+B to switch between files")
-    lines = append(lines, "Press Ctrl+O and type filename to open specific file") 
-    lines = append(lines, "Press Ctrl+N: Create a new file in the canvas")
-    lines = append(lines, "")
-    lines = append(lines, "Use Arrow Keys to navigate files and Enter to open")
-
-    return lines
-}
 
 // createProjectOverviewWithFiles создает обзор проекта и возвращает список файлов
 func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]string, []string) {
