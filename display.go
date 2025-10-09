@@ -20,6 +20,7 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+
 // Style definitions for syntax highlighting.
 // Определения стилей для подсветки синтаксиса.
 var (
