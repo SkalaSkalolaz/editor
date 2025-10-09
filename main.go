@@ -229,95 +229,113 @@ func NewEditor(path string, provider string, model string) *Editor {
 // readProjectFiles reads all supported files from a directory
 // readProjectFiles читает все поддерживаемые файлы из директории
 func readProjectFiles(dirPath string) (map[string]string, error) {
-	files := make(map[string]string)
+    files := make(map[string]string)
 
-	supportedExts := map[string]bool{
-		".c": true, ".h": true,
-		".cpp": true, ".cc": true, ".cxx": true, ".hpp": true, ".hh": true,
-		".s": true, ".asm": true,
-		".f": true, ".for": true, ".f90": true, ".f95": true, ".f03": true,
-		".go": true,
-		".py": true,
-		".rb": true,
-		".kt": true, ".kts": true,
-		".swift": true,
-		".html":  true, ".htm": true,
-		".lisp": true, ".lsp": true, ".cl": true, ".el": true,
-		".uml": true, ".png": true,
-		".txt": true, ".log": true, ".csv": true, ".tsv": true, ".json": true, ".md": true, ".xml": true,
-		".yaml": true, ".ini": true, ".cfg": true, ".env": true, ".nfo": true, ".css": true, ".bat": true,
-		".sh": true, 
-	}
+    supportedExts := map[string]bool{
+        // Исходный код
+        ".c": true, ".h": true,
+        ".cpp": true, ".cc": true, ".cxx": true, ".hpp": true, ".hh": true,
+        ".s": true, ".asm": true,
+        ".f": true, ".for": true, ".f90": true, ".f95": true, ".f03": true,
+        ".go": true,
+        ".py": true,
+        ".rb": true,
+        ".kt": true, ".kts": true,
+        ".swift": true,
+        ".html": true, ".htm": true,
+        ".lisp": true, ".lsp": true, ".cl": true, ".el": true,
+        ".uml": true, ".png": true,
+        
+        // Текстовые файлы и файлы данных
+        ".txt": true, ".log": true, ".csv": true, ".tsv": true, 
+        ".json": true, ".md": true, ".xml": true, ".yaml": true, ".yml": true,
+        ".ini": true, ".cfg": true, ".conf": true, ".env": true, ".nfo": true,
+        ".rtf": true, ".doc": true, ".docx": true, ".odt": true, ".pdf": true,
+        
+        // Database файлы
+        ".sql": true, ".db": true, ".sqlite": true, ".sqlite3": true,
+        ".mdb": true, ".accdb": true, ".dbf": true, ".mdf": true, ".ldf": true,
+        ".frm": true, ".ibd": true, ".myd": true, ".myi": true,
+        ".jsonl": true, ".ndjson": true, ".parquet": true, ".avro": true, ".orc": true,
+        
+        // Другие
+        ".css": true, ".bat": true, ".sh": true, 
+    }
 
-	projectFiles := map[string]bool{
-		"README.md": true, "README": true, "README.txt": true,
-		"LICENSE": true, "LICENSE.txt": true, "COPYING": true,
-		"CREDITS.md": true, "CREDITS": true, "CREDITS.txt": true,
-		"Makefile": true, "makefile": true,
-		"Dockerfile": true, 
-		".gitignore": true,
-		"go.mod":     true, "go.sum": true,
-		"package.json": true, "package-lock.json": true,
-		"requirements.txt": true, "Pipfile": true,
-		"Cargo.toml": true, "Cargo.lock": true,
-		"pom.xml": true, "build.gradle": true, "build.gradle.kts": true,
-		"CMakeLists.txt": true,
-		".env":           true, ".env.example": true,
-		"docker-compose.yml": true, "docker-compose.yaml": true,
-	}
+    projectFiles := map[string]bool{
+        "README.md": true, "README": true, "README.txt": true,
+        "LICENSE": true, "LICENSE.txt": true, "COPYING": true,
+        "CREDITS.md": true, "CREDITS": true, "CREDITS.txt": true,
+        "Makefile": true, "makefile": true,
+        "Dockerfile": true, 
+        ".gitignore": true,
+        "go.mod": true, "go.sum": true,
+        "package.json": true, "package-lock.json": true,
+        "requirements.txt": true, "Pipfile": true,
+        "Cargo.toml": true, "Cargo.lock": true,
+        "pom.xml": true, "build.gradle": true, "build.gradle.kts": true,
+        "CMakeLists.txt": true,
+        ".env": true, ".env.example": true,
+        "docker-compose.yml": true, "docker-compose.yaml": true,
+        
+        // Database и data файлы
+        "schema.sql": true, "database.sql": true, "dump.sql": true,
+        "data.json": true, "export.csv": true, "backup.json": true,
+    }
 
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+    err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
 
-		if info.IsDir() {
-			if strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != ".." {
-				return filepath.SkipDir
-			}
-			return nil
-		}
+        if info.IsDir() {
+            if strings.HasPrefix(info.Name(), ".") && info.Name() != "." && info.Name() != ".." {
+                return filepath.SkipDir
+            }
+            return nil
+        }
 
-		filename := info.Name()
-		ext := strings.ToLower(filepath.Ext(filename))
+        filename := info.Name()
+        ext := strings.ToLower(filepath.Ext(filename))
+        lowerName := strings.ToLower(filename)
 
-		if supportedExts[ext] {
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			relPath, _ := filepath.Rel(dirPath, path)
-			files[relPath] = string(content)
-			return nil
-		}
+        if supportedExts[ext] {
+            content, err := os.ReadFile(path)
+            if err != nil {
+                return err
+            }
+            relPath, _ := filepath.Rel(dirPath, path)
+            files[relPath] = string(content)
+            return nil
+        }
 
-		if projectFiles[filename] || projectFiles[strings.ToLower(filename)] {
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			relPath, _ := filepath.Rel(dirPath, path)
-			files[relPath] = string(content)
-			return nil
-		}
+        if projectFiles[filename] || projectFiles[lowerName] {
+            content, err := os.ReadFile(path)
+            if err != nil {
+                return err
+            }
+            relPath, _ := filepath.Rel(dirPath, path)
+            files[relPath] = string(content)
+            return nil
+        }
 
-		if filename == "Makefile" || filename == "makefile" || filename == "Dockerfile" {
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			relPath, _ := filepath.Rel(dirPath, path)
-			files[relPath] = string(content)
-		}
+        if isTextDataFile(ext, lowerName) || isDatabaseFile(ext, lowerName) {
+            content, err := os.ReadFile(path)
+            if err != nil {
+                return err
+            }
+            relPath, _ := filepath.Rel(dirPath, path)
+            files[relPath] = string(content)
+        }
 
-		return nil
-	})
+        return nil
+    })
 
-	if err != nil {
-		return nil, err
-	}
+    if err != nil {
+        return nil, err
+    }
 
-	return files, nil
+    return files, nil
 }
 
 // NewEditorWithProject creates a new Editor instance with project files
@@ -383,8 +401,9 @@ func NewEditorWithProject(dirPath string, provider string, model string) *Editor
 }
 
 
+
 // createProjectOverviewWithFiles создает обзор проекта и возвращает список файлов
-// с разделением на заполненные и пустые файлы
+// с разделением на категории, включая текстовые файлы и файлы данных
 func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]string, []string) {
     lines := []string{
         "PROJECT OVERVIEW",
@@ -404,6 +423,8 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
     sourceFiles := []string{}
     configFiles := []string{}
     docFiles := []string{}
+    textDataFiles := []string{}
+    databaseFiles := []string{}
     emptyFiles := []string{}
 
     // Разделяем файлы на категории и проверяем на пустоту
@@ -436,6 +457,18 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
             } else {
                 docFiles = append(docFiles, filename)
             }
+        case isTextDataFile(ext, lowerName):
+            if isEmpty {
+                emptyFiles = append(emptyFiles, filename)
+            } else {
+                textDataFiles = append(textDataFiles, filename)
+            }
+        case isDatabaseFile(ext, lowerName):
+            if isEmpty {
+                emptyFiles = append(emptyFiles, filename)
+            } else {
+                databaseFiles = append(databaseFiles, filename)
+            }
         default:
             if isEmpty {
                 emptyFiles = append(emptyFiles, filename)
@@ -455,7 +488,27 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
         }
         lines = append(lines, "")
     }
-	if len(emptyFiles) > 0 {
+
+    if len(textDataFiles) > 0 {
+        lines = append(lines, "TEXT AND DATA FILES:")
+        lines = append(lines, "-------------------")
+        for _, file := range textDataFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
+
+    if len(databaseFiles) > 0 {
+        lines = append(lines, "DATABASE FILES:")
+        lines = append(lines, "---------------")
+        for _, file := range databaseFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
+    if len(emptyFiles) > 0 {
         lines = append(lines, "EMPTY FILES:")
         lines = append(lines, "------------")
         for _, file := range emptyFiles {
@@ -464,6 +517,7 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
         }
         lines = append(lines, "")
     }
+
     if len(configFiles) > 0 {
         lines = append(lines, "CONFIGURATION FILES:")
         lines = append(lines, "---------------------")
@@ -493,11 +547,69 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
     return lines, allDisplayFiles
 }
 
+// isTextDataFile проверяет, является ли файл текстовым или файлом данных
+func isTextDataFile(ext string, filename string) bool {
+    textDataExts := []string{
+        ".txt", ".log", ".csv", ".tsv", ".json", ".md", ".xml", 
+        ".yaml", ".yml", ".ini", ".cfg", ".conf", ".env", 
+        ".nfo", ".rtf", ".doc", ".docx", ".odt", ".pdf",
+    }
+    
+    for _, e := range textDataExts {
+        if ext == e {
+            return true
+        }
+    }
+    
+    // Проверяем по имени файла
+    textDataPatterns := []string{
+        "readme", "license", "copying", "credits", "changelog", 
+        "history", "notes", "todo", "faq", "manifest",
+    }
+    
+    for _, pattern := range textDataPatterns {
+        if strings.Contains(filename, pattern) {
+            return true
+        }
+    }
+    
+    return false
+}
+
+// isDatabaseFile проверяет, является ли файл файлом базы данных
+func isDatabaseFile(ext string, filename string) bool {
+    databaseExts := []string{
+        ".sql", ".db", ".sqlite", ".sqlite3", ".mdb", ".accdb",
+        ".dbf", ".mdf", ".ldf", ".frm", ".ibd", ".myd", ".myi",
+        ".jsonl", ".ndjson", ".parquet", ".avro", ".orc",
+    }
+    
+    for _, e := range databaseExts {
+        if ext == e {
+            return true
+        }
+    }
+    
+    // Проверяем по имени файла
+    databasePatterns := []string{
+        "database", "db", "schema", "dump", "backup", "export",
+    }
+    
+    for _, pattern := range databasePatterns {
+        if strings.Contains(filename, pattern) {
+            return true
+        }
+    }
+    
+    return false
+}
+
+
 // isSourceFile checks if file extension indicates a source code file
 // isSourceFile проверяет, указывает ли расширение файла на файл исходного кода
 func isSourceFile(ext string) bool {
 	sourceExts := []string{".c", ".h", ".cpp", ".cc", ".cxx", ".hpp", ".hh", ".s", ".asm",
-		".f", ".for", ".f90", ".f95", ".f03", ".go", ".py", ".rb",
+		".f", ".for", ".f90", ".f95", ".f03", ".go", ".py", ".rb", ".xml", ".js",
 		".kt", ".kts", ".swift", ".html", ".htm", ".lisp", ".lsp", ".cl", ".el"}
 	for _, e := range sourceExts {
 		if ext == e {
@@ -970,3 +1082,9 @@ func main() {
 func filepathExtNew(filename string) string {
 	return strings.ToLower(filepath.Ext(filename))
 }
+
+
+
+
+
+
