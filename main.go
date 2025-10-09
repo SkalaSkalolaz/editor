@@ -384,6 +384,7 @@ func NewEditorWithProject(dirPath string, provider string, model string) *Editor
 
 
 // createProjectOverviewWithFiles создает обзор проекта и возвращает список файлов
+// с разделением на заполненные и пустые файлы
 func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]string, []string) {
     lines := []string{
         "PROJECT OVERVIEW",
@@ -403,23 +404,44 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
     sourceFiles := []string{}
     configFiles := []string{}
     docFiles := []string{}
+    emptyFiles := []string{}
 
+    // Разделяем файлы на категории и проверяем на пустоту
     for _, filename := range filenames {
+        content := files[filename]
+        isEmpty := strings.TrimSpace(content) == ""
+        
         ext := strings.ToLower(filepath.Ext(filename))
         lowerName := strings.ToLower(filename)
 
         switch {
         case isSourceFile(ext):
-            sourceFiles = append(sourceFiles, filename)
+            if isEmpty {
+                emptyFiles = append(emptyFiles, filename)
+            } else {
+                sourceFiles = append(sourceFiles, filename)
+            }
         case isConfigFile(filename) || strings.Contains(lowerName, "config") ||
             strings.Contains(lowerName, "makefile") || strings.Contains(lowerName, "docker"):
-            configFiles = append(configFiles, filename)
+            if isEmpty {
+                emptyFiles = append(emptyFiles, filename)
+            } else {
+                configFiles = append(configFiles, filename)
+            }
         case strings.Contains(lowerName, "readme") || strings.Contains(lowerName, "license") ||
             strings.Contains(lowerName, "copying") || strings.Contains(lowerName, "credits") || 
             strings.Contains(lowerName, "project"):
-            docFiles = append(docFiles, filename)
+            if isEmpty {
+                emptyFiles = append(emptyFiles, filename)
+            } else {
+                docFiles = append(docFiles, filename)
+            }
         default:
-            configFiles = append(configFiles, filename)
+            if isEmpty {
+                emptyFiles = append(emptyFiles, filename)
+            } else {
+                configFiles = append(configFiles, filename)
+            }
         }
     }
 
@@ -433,7 +455,15 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
         }
         lines = append(lines, "")
     }
-
+	if len(emptyFiles) > 0 {
+        lines = append(lines, "EMPTY FILES:")
+        lines = append(lines, "------------")
+        for _, file := range emptyFiles {
+            lines = append(lines, "  • "+file)
+            allDisplayFiles = append(allDisplayFiles, file)
+        }
+        lines = append(lines, "")
+    }
     if len(configFiles) > 0 {
         lines = append(lines, "CONFIGURATION FILES:")
         lines = append(lines, "---------------------")
@@ -453,6 +483,7 @@ func (e *Editor) createProjectOverviewWithFiles(files map[string]string) ([]stri
         }
         lines = append(lines, "")
     }
+
 
     lines = append(lines, "Navigation: Use Ctrl+B to switch between files")
     lines = append(lines, "Press Arrow Keys to navigate files and Enter to open")
