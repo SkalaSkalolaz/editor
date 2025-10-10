@@ -33,16 +33,39 @@ func (e *Editor) llmQuery(instruction string) {
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
 	}
-
-	payload := instruction
-	if e.selectAllBeforeLLM {
-		allText := strings.Join(e.lines, "\n")
-		if strings.TrimSpace(allText) != "" {
-			payload = payload + "\nExisting text:\n" + allText
-		}
-	}
+    payload := e.llmContext.BuildPayload(instruction, e.selectAllBeforeLLM, e)
 
 	_ = e.sendPayloadToLLM(payload)
+}
+
+// BuildPayload строит полный payload для LLM с учетом контекста
+func (lc *LLMContext) BuildPayload(baseInstruction string, includeEditorContent bool, editor *Editor) string {
+    var sb strings.Builder
+    
+    sb.WriteString(baseInstruction)
+    sb.WriteString("\n\n")
+    
+    if lc.UseInputFiles && len(lc.InputFiles) > 0 {
+        sb.WriteString("INPUT FILES CONTENT:\n")
+        sb.WriteString("====================\n\n")
+        
+        for filename, content := range lc.InputFiles {
+            sb.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
+            sb.WriteString(content)
+            sb.WriteString("\n\n")
+        }
+    }
+    
+    if includeEditorContent && editor != nil {
+        allText := strings.Join(editor.lines, "\n")
+        if strings.TrimSpace(allText) != "" {
+            sb.WriteString("EXISTING EDITOR CONTENT:\n")
+            sb.WriteString(allText)
+            sb.WriteString("\n\n")
+        }
+    }
+    
+    return sb.String()
 }
 
 // llmQueryWithClipboard и явно добавляет содержимое буфера обмена (если оно не пустое).
@@ -59,19 +82,37 @@ func (e *Editor) llmQueryWithClipboard(instruction string) {
 		e.llmModel = "gemma3:4b"
 	}
 
-	payload := instruction
-	if cb := getClipboardData(); cb != "" {
-		payload = payload + "\nData from clipboard:\n" + cb
-	}
+	   var payload strings.Builder
+    payload.WriteString(instruction)
+    payload.WriteString("\n\n")
+    
+    if cb := getClipboardData(); cb != "" {
+        payload.WriteString("DATA FROM CLIPBOARD:\n")
+        payload.WriteString(cb)
+        payload.WriteString("\n\n")
+    }
+    
+    if e.llmContext.UseInputFiles && len(e.llmContext.InputFiles) > 0 {
+        payload.WriteString("INPUT FILES CONTENT:\n")
+        payload.WriteString("====================\n\n")
+        
+        for filename, content := range e.llmContext.InputFiles {
+            payload.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
+            payload.WriteString(content)
+            payload.WriteString("\n\n")
+        }
+    }
+    
+    if e.selectAllBeforeLLM {
+        allText := strings.Join(e.lines, "\n")
+        if strings.TrimSpace(allText) != "" {
+            payload.WriteString("EXISTING TEXT:\n")
+            payload.WriteString(allText)
+            payload.WriteString("\n\n")
+        }
+    }
 
-	if e.selectAllBeforeLLM {
-		allText := strings.Join(e.lines, "\n")
-		if strings.TrimSpace(allText) != "" {
-			payload = payload + "\nExisting text:\n" + allText
-		}
-	}
-
-	_ = e.sendPayloadToLLM(payload)
+	_ = e.sendPayloadToLLM(payload.String())
 }
 
 // sendPayloadToLLM — helper: отправляет payload к LLM, обрабатывает ошибки и вставляет ответ.
@@ -1090,12 +1131,38 @@ func ProcessStreamingLLM(provider, model, apiKey string, useClipboardData bool, 
 	if strings.TrimSpace(fullPayload) == "" {
 		return fmt.Errorf("empty input provided")
 	}
+
+	done := make(chan bool, 1)
+	go showThinkingIndicator(done)
+	defer func() { done <- true }()
+
 	response, err := SendMessageToLLM(fullPayload, provider, model, apiKey)
 	if err != nil {
 		return fmt.Errorf("LLM request failed: %w", err)
 	}
+	
 	fmt.Print(response)
 	return nil
+}
+
+// showThinkingIndicator показывает анимированный индикатор "мышления"
+func showThinkingIndicator(done chan bool) {
+	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	i := 0
+	
+	for {
+		select {
+		case <-done:
+			fmt.Fprint(os.Stderr, "\r\r")
+			return
+		default:
+			frame := frames[i%len(frames)]
+			fmt.Fprintf(os.Stderr, "\r%s LLM is thinking...", frame)
+			
+			i++
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 // processStreamInput обрабатывает входные данные для потокового режима
