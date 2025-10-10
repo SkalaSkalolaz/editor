@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)  
 [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
 
-Version: **1.0.1**
+Version: **1.0.2**
 ![Editor's screenshot](Editor.png)
 
 ## Project Description
@@ -101,6 +101,11 @@ echo 'Analyze data' | ./editor -s --data  --input ./src ollama gemma3:4b"
 ```
 ./editor pollinations qwen3:1.7b https://github.com/SkalaSkalolaz/editor ghp_
 ```
+- Using a directory or file as RAG for LLM
+```
+./editor -i ./src ollama gemma3:4b
+``
+
 - Translation of the selected text (by default, into the system language):
 
   Ctrl-W → enter the language code → Enter
