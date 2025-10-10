@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.0.1"
+const Version = "1.0.2"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -74,6 +74,7 @@ type Editor struct {
 	autoCompleteMode  bool
     autoCompleteState *AutoCompleteState
 	bracketHighlightState *BracketHighlightState
+	llmContext       *LLMContext
 }
 
 // BracketHighlightState управляет состоянием подсветки парных скобок
@@ -122,6 +123,21 @@ type FileSelection struct {
     anchorIndex   int        
 }
 
+// LLMContext управляет контекстом для LLM-запросов
+type LLMContext struct {
+    Instruction    string
+    InputFiles     map[string]string
+    UseInputFiles  bool
+    StreamMode     bool
+}
+
+// NewLLMContext создает новый контекст LLM
+func NewLLMContext() *LLMContext {
+    return &LLMContext{
+        InputFiles: make(map[string]string),
+    }
+}
+
 
 // detectLanguage detects the language based on the file extension.
 // detectLanguage определяет язык на основе расширения файла.
@@ -168,6 +184,7 @@ func NewEditor(path string, provider string, model string) *Editor {
 		language:      LangUnknown,
 		canvases:      make(map[int]*Canvas),
 		currentCanvas: 1,
+		llmContext:    NewLLMContext(),
 		bracketHighlightState: &BracketHighlightState{
             active: false,
         },
@@ -352,6 +369,7 @@ func NewEditorWithProject(dirPath string, provider string, model string) *Editor
         projectFiles:      []string{},
         currentFileIndex:  -1,
         inProjectOverview: true,
+		llmContext:        NewLLMContext(),
 		fileSelection: &FileSelection{
             selectedFiles: make(map[string]bool),
         },
@@ -985,6 +1003,7 @@ func main() {
 		}
 		return
 	}
+
 	args := flag.Args()
 	switch {
 	case len(args) >= 3:
@@ -1067,6 +1086,16 @@ func main() {
 	if editor == nil {
 		return
 	}
+    if inputFiles != "" && !streamMode {
+        inputData, err := readInputFiles(inputFiles)
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "Warning: could not read input files: %v\n", err)
+        } else {
+            editor.llmContext.InputFiles = inputData
+            editor.llmContext.UseInputFiles = true
+        }
+    }
+
 	if autoCompleteMode && !streamMode {
         if editor != nil {
             editor.autoCompleteMode = true
