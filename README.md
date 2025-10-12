@@ -104,7 +104,7 @@ echo 'Analyze data' | ./editor -s --data  --input ./src ollama gemma3:4b"
 - Using a directory or file as RAG for LLM
 ```
 ./editor -i ./src ollama gemma3:4b
-``
+```
 
 - Translation of the selected text (by default, into the system language):
 
