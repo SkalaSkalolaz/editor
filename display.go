@@ -654,70 +654,117 @@ func (e *Editor) insertTextAtCursor(text string) {
 
 // indentSelection добавляет отступ (например, 4 пробела) в начало выделенных строк.
 // Если выделение построчное или символьное, применяется ко всем затронутым строкам.
+// Если выделения нет, применяется к текущей строке курсора.
 func (e *Editor) indentSelection() {
-	if !e.selecting {
-		return
-	}
-	e.pushUndo()
-	startLine, _, endLine, _ := e.getSelectionRange()
-	if startLine < 0 {
-		startLine = 0
-	}
-	if endLine >= len(e.lines) {
-		endLine = len(e.lines) - 1
-	}
-	if startLine > endLine {
-		startLine, endLine = endLine, startLine
-	}
+    e.pushUndo()
+    
+    var startLine, endLine int
+    
+    if e.selecting {
+        start, _, end, _ := e.getSelectionRange()
+        startLine = start
+        endLine = end
+        if startLine < 0 {
+            startLine = 0
+        }
+        if endLine >= len(e.lines) {
+            endLine = len(e.lines) - 1
+        }
+        if startLine > endLine {
+            startLine, endLine = endLine, startLine
+        }
+    } else {
+        startLine = e.cy
+        endLine = e.cy
+        if startLine < 0 {
+            startLine = 0
+        }
+        if startLine >= len(e.lines) {
+            startLine = len(e.lines) - 1
+        }
+    }
 
-	indentText := "    "
-	for i := startLine; i <= endLine; i++ {
-		e.lines[i] = indentText + e.lines[i]
-	}
+    indentText := "    "
+    for i := startLine; i <= endLine; i++ {
+        e.lines[i] = indentText + e.lines[i]
+    }
 
-	e.dirty = true
+    if !e.selecting {
+        lineRunes := []rune(e.lines[e.cy])
+        if e.cx < len(lineRunes) {
+            e.cx += len(indentText)
+        }
+    }
+
+    e.dirty = true
 }
 
 // unindentSelection удаляет отступ (например, 4 пробела или 1 таб) из начала выделенных строк.
 // Если выделение построчное или символьное, применяется ко всем затронутым строкам.
+// Если выделения нет, применяется к текущей строке курсора.
 func (e *Editor) unindentSelection() {
-	if !e.selecting {
-		return
-	}
-	e.pushUndo()
+    e.pushUndo()
 
-	startLine, _, endLine, _ := e.getSelectionRange()
-	if startLine < 0 {
-		startLine = 0
-	}
-	if endLine >= len(e.lines) {
-		endLine = len(e.lines) - 1
-	}
-	if startLine > endLine {
-		startLine, endLine = endLine, startLine
-	}
+    var startLine, endLine int
+    
+    if e.selecting {
+        start, _, end, _ := e.getSelectionRange()
+        startLine = start
+        endLine = end
+        if startLine < 0 {
+            startLine = 0
+        }
+        if endLine >= len(e.lines) {
+            endLine = len(e.lines) - 1
+        }
+        if startLine > endLine {
+            startLine, endLine = endLine, startLine
+        }
+    } else {
+        startLine = e.cy
+        endLine = e.cy
+        if startLine < 0 {
+            startLine = 0
+        }
+        if startLine >= len(e.lines) {
+            startLine = len(e.lines) - 1
+        }
+    }
 
-	const tabSize = 4
-	spaceIndent := strings.Repeat(" ", tabSize)
+    const tabSize = 4
+    spaceIndent := strings.Repeat(" ", tabSize)
 
-	for i := startLine; i <= endLine; i++ {
-		line := e.lines[i]
-		if strings.HasPrefix(line, spaceIndent) {
-			e.lines[i] = line[tabSize:]
-		} else if strings.HasPrefix(line, "\t") {
-			e.lines[i] = line[1:]
-		} else if len(line) > 0 {
-			numSpaces := 0
-			for numSpaces < len(line) && line[numSpaces] == ' ' && numSpaces < tabSize {
-				numSpaces++
-			}
-			if numSpaces > 0 {
-				e.lines[i] = line[numSpaces:]
-			}
-		}
-	}
+    for i := startLine; i <= endLine; i++ {
+        line := e.lines[i]
+        originalLength := len(line)
+        
+        if strings.HasPrefix(line, spaceIndent) {
+            e.lines[i] = line[tabSize:]
+        } else if strings.HasPrefix(line, "\t") {
+            e.lines[i] = line[1:]
+        } else if len(line) > 0 {
+            numSpaces := 0
+            for numSpaces < len(line) && line[numSpaces] == ' ' && numSpaces < tabSize {
+                numSpaces++
+            }
+            if numSpaces > 0 {
+                e.lines[i] = line[numSpaces:]
+            }
+        }
+        
+        if i == e.cy && !e.selecting {
+            newLength := len(e.lines[i])
+            lengthDiff := originalLength - newLength
+            
+            if e.cx >= lengthDiff {
+                e.cx -= lengthDiff
+            } else {
+                e.cx = 0
+            }
+        }
+    }
 
-	e.dirty = true
+    e.dirty = true
 }
 
 // deleteWordAfterCursor удаляет слово, которое начинается либо после курсора,
@@ -806,60 +853,128 @@ func (e *Editor) getUsageText() string {
 }
 
 // toggleCommentSelection комментирует или снимает комментарий у выделённых строк.
-// Примечание: выполняется только если есть активное построчное выделение (lineSelecting)
+// Работает с любым типом выделения (символьным или построчным).
 func (e *Editor) toggleCommentSelection() {
-	if !e.selecting || !e.lineSelecting {
-		return
-	}
-	prefix, ok := getLineCommentPrefix(e.language)
-	if !ok || prefix == "" {
-		return
-	}
-	lo, _, hi, _ := e.getSelectionRange()
-	if lo > hi {
-		lo, hi = hi, lo
-	}
-	e.pushUndo()
-	allCommented := true
-	for i := lo; i <= hi; i++ {
-		line := e.lines[i]
-		lead := 0
-		for lead < len(line) && (line[lead] == ' ' || line[lead] == '\t') {
-			lead++
-		}
-		if lead+len(prefix) > len(line) || line[lead:lead+len(prefix)] != prefix {
-			allCommented = false
-			break
-		}
-	}
-
-	if allCommented {
-		for i := lo; i <= hi; i++ {
-			l := e.lines[i]
-			lead := 0
-			for lead < len(l) && (l[lead] == ' ' || l[lead] == '\t') {
-				lead++
-			}
-			if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
-				e.lines[i] = l[:lead] + l[lead+len(prefix):]
-			}
-		}
-	} else {
-		for i := lo; i <= hi; i++ {
-			l := e.lines[i]
-			lead := 0
-			for lead < len(l) && (l[lead] == ' ' || l[lead] == '\t') {
-				lead++
-			}
-			if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
-				continue
-			}
-			e.lines[i] = l[:lead] + prefix + l[lead:]
-		}
-	}
-	e.dirty = true
-	e.ensureVisible()
-	e.endSelection()
+    if !e.selecting {
+        return
+    }
+    
+    prefix, ok := getLineCommentPrefix(e.language)
+    if !ok || prefix == "" {
+        return
+    }
+    
+    // Получаем диапазон выделения
+    startLine, startCol, endLine, endCol := e.getSelectionRange()
+    if startLine > endLine {
+        startLine, endLine = endLine, startLine
+    }
+    
+    // Для символьного выделения определяем, какие строки полностью выделены
+    var linesToComment []int
+    
+    if e.lineSelecting {
+        // Построчное выделение - все строки в диапазоне
+        for i := startLine; i <= endLine; i++ {
+            linesToComment = append(linesToComment, i)
+        }
+    } else {
+        // Символьное выделение - определяем, какие строки полностью выделены
+        if startLine == endLine {
+            // Выделение в одной строке
+            lineRunes := []rune(e.lines[startLine])
+            if (startCol == 0 && endCol >= len(lineRunes)) || 
+               (startCol == 0 && endCol == len(lineRunes)) {
+                linesToComment = append(linesToComment, startLine)
+            }
+        } else {
+            // Многострочное выделение
+            // Первая строка - если выделение начинается с начала строки
+            if startCol == 0 {
+                linesToComment = append(linesToComment, startLine)
+            }
+            
+            // Промежуточные строки - всегда полностью
+            for i := startLine + 1; i < endLine; i++ {
+                linesToComment = append(linesToComment, i)
+            }
+            
+            // Последняя строка - если выделение заканчивается в конце строки
+            lineRunes := []rune(e.lines[endLine])
+            if endCol >= len(lineRunes) {
+                linesToComment = append(linesToComment, endLine)
+            }
+        }
+    }
+    
+    if len(linesToComment) == 0 {
+        // Если нет полностью выделенных строк, комментируем все строки в диапазоне
+        for i := startLine; i <= endLine; i++ {
+            linesToComment = append(linesToComment, i)
+        }
+    }
+    
+    if len(linesToComment) == 0 {
+        return
+    }
+    
+    e.pushUndo()
+    
+    // Проверяем, все ли строки уже закомментированы
+    allCommented := true
+    for _, lineIdx := range linesToComment {
+        if lineIdx < 0 || lineIdx >= len(e.lines) {
+            continue
+        }
+        line := e.lines[lineIdx]
+        lead := 0
+        for lead < len(line) && (line[lead] == ' ' || line[lead] == '\t') {
+            lead++
+        }
+        if lead+len(prefix) > len(line) || line[lead:lead+len(prefix)] != prefix {
+            allCommented = false
+            break
+        }
+    }
+    
+    // Комментируем или снимаем комментарии
+    if allCommented {
+        // Снимаем комментарии
+        for _, lineIdx := range linesToComment {
+            if lineIdx < 0 || lineIdx >= len(e.lines) {
+                continue
+            }
+            l := e.lines[lineIdx]
+            lead := 0
+            for lead < len(l) && (l[lead] == ' ' || l[lead] == '\t') {
+                lead++
+            }
+            if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
+                e.lines[lineIdx] = l[:lead] + l[lead+len(prefix):]
+            }
+        }
+    } else {
+        // Добавляем комментарии
+        for _, lineIdx := range linesToComment {
+            if lineIdx < 0 || lineIdx >= len(e.lines) {
+                continue
+            }
+            l := e.lines[lineIdx]
+            lead := 0
+            for lead < len(l) && (l[lead] == ' ' || l[lead] == '\t') {
+                lead++
+            }
+            if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
+                continue // Уже закомментирована
+            }
+            e.lines[lineIdx] = l[:lead] + prefix + l[lead:]
+        }
+    }
+    
+    e.dirty = true
+    e.ensureVisible()
+    // Не сбрасываем выделение после комментирования
+    // e.endSelection()
 }
 
 func (e *Editor) toggleCommentLine() {
@@ -1967,7 +2082,7 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.prompt = nil
 		e.render()
 	case tcell.KeyCtrlK:
-		if e.selecting && e.lineSelecting {
+		if e.selecting {
 			e.toggleCommentSelection()
 		} else {
 			e.toggleCommentLine()
