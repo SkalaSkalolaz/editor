@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)  
 [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
 
-Version: **1.0.4**
+Version: **1.0.5**
 ![Editor's screenshot](Editor.png)
 
 ## Project Description
