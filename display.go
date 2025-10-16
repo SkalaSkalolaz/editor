@@ -117,10 +117,10 @@ func (e *Editor) refreshSize() {
 	e.height = e.contentHeight
 	
 	if e.structurePanelWidth <= 0 {
-		e.structurePanelWidth = 4
+		e.structurePanelWidth = 1
 	}
-	if e.structurePanelWidth > e.contentWidth/3 {
-		e.structurePanelWidth = e.contentWidth / 3
+	if e.structurePanelWidth > e.contentWidth/ 2 {
+		e.structurePanelWidth = e.contentWidth / 2
 	}
 	
 	if e.showLineNumbers {
@@ -3439,44 +3439,33 @@ func (e *Editor) buildStructureForLine(lineIdx int, width int) []panelCell {
 	return res
 }
 
-// drawStructurePanel — рисует правую панель как мини-карту всего буфера display.
+
+// drawStructurePanel — рисует правую панель как вертикальную полосу прокрутки
 func (e *Editor) drawStructurePanel(display []DisplayRow, contentRows int) {
 	if !e.showStructurePanel || e.structurePanelWidth <= 0 {
 		return
 	}
+	
 	panelStartX := e.contentWidth - e.structurePanelWidth
 	if panelStartX < 0 {
 		return
 	}
-	sepX := panelStartX - 1
-	if sepX >= 0 {
-		for y := 1; y <= contentRows; y++ {
-			e.screen.SetContent(sepX, y, '│', nil, tcell.StyleDefault.Foreground(tcell.ColorGray))
-		}
-	}
 
 	totalDisplay := len(display)
 	if totalDisplay == 0 {
-		for i := 0; i < contentRows; i++ {
+		for y := 1; y <= contentRows; y++ {
 			for x := 0; x < e.structurePanelWidth; x++ {
-				e.screen.SetContent(panelStartX+x, i+1, ' ', nil, styleDefault)
+				e.screen.SetContent(panelStartX+x, y, ' ', nil, styleDefault)
 			}
 		}
 		return
 	}
-	curDisplayRow, _, _ := e.cursorDisplayPosition()
-	cursorPanelRow := int(math.Floor(float64(curDisplayRow) * float64(contentRows) / float64(totalDisplay)))
-	if cursorPanelRow < 0 {
-		cursorPanelRow = 0
-	}
-	if cursorPanelRow >= contentRows {
-		cursorPanelRow = contentRows - 1
-	}
 
 	viewportStart := e.offsetY
 	viewportEnd := e.offsetY + contentRows - 1
-	viewportPanelStart := int(math.Floor(float64(viewportStart) * float64(contentRows) / float64(totalDisplay)))
-	viewportPanelEnd := int(math.Floor(float64(viewportEnd) * float64(contentRows) / float64(totalDisplay)))
+	viewportPanelStart := int(float64(viewportStart) * float64(contentRows) / float64(totalDisplay))
+	viewportPanelEnd := int(float64(viewportEnd) * float64(contentRows) / float64(totalDisplay))
+	
 	if viewportPanelStart < 0 {
 		viewportPanelStart = 0
 	}
@@ -3487,46 +3476,16 @@ func (e *Editor) drawStructurePanel(display []DisplayRow, contentRows int) {
 		viewportPanelEnd = viewportPanelStart
 	}
 
-	for panelRow := 0; panelRow < contentRows; panelRow++ {
-		mappedDi := int(math.Floor(float64(panelRow) * float64(totalDisplay) / float64(contentRows)))
-		if mappedDi < 0 {
-			mappedDi = 0
-		}
-		if mappedDi >= totalDisplay {
-			mappedDi = totalDisplay - 1
-		}
-
-		lineIdx := display[mappedDi].lineIndex
-		cells := e.buildStructureForLine(lineIdx, e.structurePanelWidth)
-		invertCol := -1
-		if panelRow == cursorPanelRow {
-			if e.cy >= 0 && e.cy < len(e.lines) {
-				lineRunes := []rune(e.lines[e.cy])
-				totalChars := len(lineRunes)
-				if totalChars > 0 {
-					ratio := float64(e.cx) / float64(totalChars)
-					invertCol = int(math.Floor(ratio * float64(e.structurePanelWidth)))
-					if invertCol < 0 {
-						invertCol = 0
-					}
-					if invertCol >= e.structurePanelWidth {
-						invertCol = e.structurePanelWidth - 1
-					}
-				}
+	for y := 0; y < contentRows; y++ {
+		if y >= viewportPanelStart && y <= viewportPanelEnd {
+			for x := 0; x < e.structurePanelWidth; x++ {
+				e.screen.SetContent(panelStartX+x, y+1, '░', nil, 
+					tcell.StyleDefault.Background(tcell.ColorDarkGray).Foreground(tcell.ColorGray))
 			}
-		}
-		isInViewport := (panelRow >= viewportPanelStart && panelRow <= viewportPanelEnd)
-		for x := 0; x < e.structurePanelWidth; x++ {
-			ch := cells[x].Ch
-			st := cells[x].Style
-			if isInViewport {
-				st = st.Background(tcell.ColorDarkGray)
-			}
-			if x == invertCol && panelRow == cursorPanelRow {
-				inv := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
-				e.screen.SetContent(panelStartX+x, panelRow+1, ch, nil, inv)
-			} else {
-				e.screen.SetContent(panelStartX+x, panelRow+1, ch, nil, st)
+		} else {
+			for x := 0; x < e.structurePanelWidth; x++ {
+				e.screen.SetContent(panelStartX+x, y+1, ' ', nil, 
+					tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorDarkGray))
 			}
 		}
 	}
