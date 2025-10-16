@@ -1,3 +1,8 @@
+// display.go
+// Назначение: Основной модуль отрисовки интерфейса редактора и обработки пользовательского ввода.
+// Содержит логику рендеринга текста, статусных строк, панелей, подсветки синтаксиса,
+// автодополнения, поиска по тексту и обработки всех горячих клавиш.
+
 package main
 
 import (
@@ -206,7 +211,7 @@ func (e *Editor) renderLineNumbers(display []DisplayRow, contentRows int) {
 		if di >= len(display) {
 			for x := 0; x < e.lineNumbersWidth; x++ {
 				e.screen.SetContent(x, i+1, ' ', nil,
-					tcell.StyleDefault.Background(tcell.ColorDarkBlue).Foreground(tcell.ColorGray))
+					tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorGray))
 			}
 			continue
 		}
@@ -214,12 +219,12 @@ func (e *Editor) renderLineNumbers(display []DisplayRow, contentRows int) {
 		row := display[di]
 		lineNumber := row.lineIndex + 1
 		lineNumStyle := tcell.StyleDefault.
-			Background(tcell.ColorDarkBlue).
+			Background(tcell.ColorBlack).
 			Foreground(tcell.ColorGray)
 
 		if row.lineIndex == e.cy {
 			lineNumStyle = lineNumStyle.
-				Background(tcell.ColorBlue).
+				Background(tcell.ColorDarkGray).
 				Foreground(tcell.ColorWhite)
 		}
 
