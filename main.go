@@ -15,7 +15,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.0.3"
+const Version = "1.0.4"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -1111,9 +1111,3 @@ func main() {
 func filepathExtNew(filename string) string {
 	return strings.ToLower(filepath.Ext(filename))
 }
-
-
-
-
-
-
