@@ -20,7 +20,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.0.5"
+const Version = "1.0.6"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -80,6 +80,7 @@ type Editor struct {
     autoCompleteState *AutoCompleteState
 	bracketHighlightState *BracketHighlightState
 	llmContext       *LLMContext
+	funcDocHint *FunctionDocHint
 }
 
 // BracketHighlightState управляет состоянием подсветки парных скобок
