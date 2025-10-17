@@ -56,26 +56,26 @@ func (e *Editor) hideFunctionDoc() {
 	}
 }
 
-// findFunctionDoc ищет определение функции и возвращает её комментарий
+// findFunctionDoc ищет определение функции и возвращает её сигнатуру + комментарий
 func (e *Editor) findFunctionDoc(lang Language, name string) string {
 	pattern := ""
 	switch lang {
 	case LangGo:
-		pattern = `(?m)(?P<comment>(?://[^\n]*\n)*)\s*func\s+` + name + `\s*\(`
+		pattern = `(?m)(?P<comment>(?://[^\n]*\n)*)\s*(?P<signature>func\s+` + name + `\s*\([^\)]*\))`
 	case LangC, LangCpp:
-		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*(?:\w+\s+)+` + name + `\s*\(`
+		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*(?P<signature>(?:\w+\s+)+` + name + `\s*\([^\)]*\))`
 	case LangPython, LangRuby:
-		pattern = `(?m)(?P<comment>(?:#.*\n)*)\s*def\s+` + name + `\s*\(`
+		pattern = `(?m)(?P<comment>(?:#.*\n)*)\s*(?P<signature>def\s+` + name + `\s*\([^\)]*\))`
 	case LangKotlin, LangSwift:
-		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*fun\s+` + name + `\s*\(`
+		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*(?P<signature>fun\s+` + name + `\s*\([^\)]*\))`
 	case LangFortran:
-		pattern = `(?m)(?P<comment>(?:!.*\n)*)\s*(?:function|subroutine)\s+` + name
+		pattern = `(?m)(?P<comment>(?:!.*\n)*)\s*(?P<signature>(?:function|subroutine)\s+` + name + `[^\n]*)`
 	case LangLisp:
-		pattern = `(?m)(?P<comment>(?:;.*\n)*)\s*\(defun\s+` + name
+		pattern = `(?m)(?P<comment>(?:;.*\n)*)\s*(?P<signature>\(defun\s+` + name + `[^\)]*\))`
 	case LangAssembly:
-		pattern = `(?m)(?P<comment>(?:;.*\n)*)\s*` + name + `:`
+		pattern = `(?m)(?P<comment>(?:;.*\n)*)\s*(?P<signature>` + name + `:)`
 	case LangHTML:
-		pattern = `(?m)(?P<comment><!--.*?-->)\s*<\s*script.*` + name
+		pattern = `(?m)(?P<comment><!--.*?-->)\s*(?P<signature><\s*script.*` + name + `)`
 	default:
 		return ""
 	}
@@ -85,18 +85,54 @@ func (e *Editor) findFunctionDoc(lang Language, name string) string {
 	for _, canvas := range e.canvases {
 		text := strings.Join(canvas.lines, "\n")
 		match := re.FindStringSubmatch(text)
-		if match != nil {
-			for i, name := range re.SubexpNames() {
-				if name == "comment" {
-					comment := strings.TrimSpace(match[i])
-					comment = cleanCommentPrefix(comment, lang)
-					return comment
-				}
+		if match == nil {
+			continue
+		}
+
+		var comment, signature string
+
+		for i, group := range re.SubexpNames() {
+			if group == "comment" {
+				comment = strings.TrimSpace(match[i])
+				comment = cleanCommentPrefix(comment, lang)
+			}
+			if group == "signature" {
+				signature = strings.TrimSpace(match[i])
 			}
 		}
+
+		if signature != "" {
+			if comment != "" {
+				return signature + "\n" + comment
+			}
+			return signature
+		}
 	}
+
 	return ""
 }
+
+
+// extractFunctionSignature получает сигнатуру функции (определение без тела)
+func extractFunctionSignature(block string, name string, lang Language) string {
+    lines := strings.Split(block, "\n")
+    for _, line := range lines {
+        line = strings.TrimSpace(line)
+        if strings.Contains(line, name) {
+            if strings.Contains(line, "{") {
+                line = strings.Split(line, "{")[0]
+            }
+            if strings.Contains(line, "//") {
+                line = strings.Split(line, "//")[0]
+            } else if strings.Contains(line, "#") {
+                line = strings.Split(line, "#")[0]
+            }
+            return strings.TrimSpace(line)
+        }
+    }
+    return ""
+}
+
 
 // extractFunctionName достает имя функции перед '('
 func extractFunctionName(before string) string {
