@@ -869,42 +869,33 @@ func (e *Editor) toggleCommentSelection() {
         return
     }
     
-    // Получаем диапазон выделения
     startLine, startCol, endLine, endCol := e.getSelectionRange()
     if startLine > endLine {
         startLine, endLine = endLine, startLine
     }
     
-    // Для символьного выделения определяем, какие строки полностью выделены
     var linesToComment []int
     
     if e.lineSelecting {
-        // Построчное выделение - все строки в диапазоне
         for i := startLine; i <= endLine; i++ {
             linesToComment = append(linesToComment, i)
         }
     } else {
-        // Символьное выделение - определяем, какие строки полностью выделены
         if startLine == endLine {
-            // Выделение в одной строке
             lineRunes := []rune(e.lines[startLine])
             if (startCol == 0 && endCol >= len(lineRunes)) || 
                (startCol == 0 && endCol == len(lineRunes)) {
                 linesToComment = append(linesToComment, startLine)
             }
         } else {
-            // Многострочное выделение
-            // Первая строка - если выделение начинается с начала строки
             if startCol == 0 {
                 linesToComment = append(linesToComment, startLine)
             }
             
-            // Промежуточные строки - всегда полностью
             for i := startLine + 1; i < endLine; i++ {
                 linesToComment = append(linesToComment, i)
             }
             
-            // Последняя строка - если выделение заканчивается в конце строки
             lineRunes := []rune(e.lines[endLine])
             if endCol >= len(lineRunes) {
                 linesToComment = append(linesToComment, endLine)
@@ -913,7 +904,6 @@ func (e *Editor) toggleCommentSelection() {
     }
     
     if len(linesToComment) == 0 {
-        // Если нет полностью выделенных строк, комментируем все строки в диапазоне
         for i := startLine; i <= endLine; i++ {
             linesToComment = append(linesToComment, i)
         }
@@ -925,7 +915,6 @@ func (e *Editor) toggleCommentSelection() {
     
     e.pushUndo()
     
-    // Проверяем, все ли строки уже закомментированы
     allCommented := true
     for _, lineIdx := range linesToComment {
         if lineIdx < 0 || lineIdx >= len(e.lines) {
@@ -942,9 +931,7 @@ func (e *Editor) toggleCommentSelection() {
         }
     }
     
-    // Комментируем или снимаем комментарии
     if allCommented {
-        // Снимаем комментарии
         for _, lineIdx := range linesToComment {
             if lineIdx < 0 || lineIdx >= len(e.lines) {
                 continue
@@ -959,7 +946,6 @@ func (e *Editor) toggleCommentSelection() {
             }
         }
     } else {
-        // Добавляем комментарии
         for _, lineIdx := range linesToComment {
             if lineIdx < 0 || lineIdx >= len(e.lines) {
                 continue
@@ -970,7 +956,7 @@ func (e *Editor) toggleCommentSelection() {
                 lead++
             }
             if lead+len(prefix) <= len(l) && l[lead:lead+len(prefix)] == prefix {
-                continue // Уже закомментирована
+                continue
             }
             e.lines[lineIdx] = l[:lead] + prefix + l[lead:]
         }
@@ -978,7 +964,6 @@ func (e *Editor) toggleCommentSelection() {
     
     e.dirty = true
     e.ensureVisible()
-    // Не сбрасываем выделение после комментирования
     // e.endSelection()
 }
 
@@ -1888,9 +1873,15 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
             e.cancelAutoComplete()
         }
     }
+   
 	if ev.Key() == tcell.KeyEscape {
         if e.bracketHighlightState != nil && e.bracketHighlightState.active {
             e.bracketHighlightState.active = false
+			e.render()
+            return
+		}
+        if e.funcDocHint != nil && e.funcDocHint.active {
+            e.funcDocHint.active = false
             e.render()
             return
         }
@@ -2440,6 +2431,9 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 				if e.shouldAutoCloseBracket(r) {
 					closing := getClosingBracket(r)
 					if closing != 0 {
+						if r == '(' {
+                            e.detectFunctionCall()
+                        }
 						e.insertTextAtCursor(string([]rune{r, closing}))
 						e.cx--
 						return
@@ -3184,7 +3178,7 @@ func (e *Editor) render() {
 			xPos += rw
 		}
 	}
-
+	e.renderFunctionDocHint()
 	e.screen.Show()
 }
 
