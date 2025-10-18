@@ -1,20 +1,26 @@
 // dochint.go
-// Показывает описание функции при её вызове в коде.
+// Показывает описание функции при её вызове в коде с динамическим обновлением аргументов
 
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/gdamore/tcell/v2"
 )
 
 // FunctionDocHint хранит текущее отображаемое описание
 type FunctionDocHint struct {
-	active    bool
-	content   string
-	startTime time.Time
+	active      bool
+	content     string
+	fullContent string   
+	startTime   time.Time
+	startCX     int       
+	message     string
 }
 
 // detectFunctionCall вызывается при вводе '('
@@ -34,38 +40,77 @@ func (e *Editor) detectFunctionCall() {
 		return
 	}
 
-	doc := e.findFunctionDoc(e.language, name)
-	if doc == "" {
-		return
-	}
-
+	shortDoc, fullDoc := e.findFunctionDocWithFullDescription(e.language, name)
 	if e.funcDocHint == nil {
 		e.funcDocHint = &FunctionDocHint{}
 	}
-	e.funcDocHint.active = true
-	e.funcDocHint.content = doc
+
 	e.funcDocHint.startTime = time.Now()
+	e.funcDocHint.startCX = e.cx - 1
+	e.funcDocHint.active = true
+
+	if shortDoc == "" {
+		e.funcDocHint.content = ""
+		e.funcDocHint.fullContent = ""
+		e.funcDocHint.message = fmt.Sprintf("Function '%s' not found", name)
+	} else {
+		e.funcDocHint.content = shortDoc
+		e.funcDocHint.fullContent = fullDoc
+		e.funcDocHint.message = ""
+	}
+
 	e.render()
 }
 
-// hideFunctionDoc скрывает подсказку при закрытии ')'
+// updateFunctionDoc динамически обновляет подсказку, если курсор внутри аргументов функции
+func (e *Editor) updateFunctionDoc() {
+	if e.funcDocHint == nil || !e.funcDocHint.active {
+		return
+	}
+
+	line := e.lines[e.cy]
+	if e.cx <= e.funcDocHint.startCX || e.cx > len([]rune(line)) {
+		e.funcDocHint.active = false
+		e.render()
+		return
+	}
+
+	openParens := 0
+	for _, r := range []rune(line)[e.funcDocHint.startCX:] {
+		if r == '(' {
+			openParens++
+		} else if r == ')' {
+			openParens--
+			if openParens <= 0 {
+				e.funcDocHint.active = false
+				e.render()
+				return
+			}
+		}
+	}
+
+	e.renderFunctionDocHint()
+}
+
+// hideFunctionDoc скрывает подсказку
 func (e *Editor) hideFunctionDoc() {
 	if e.funcDocHint != nil && e.funcDocHint.active {
 		e.funcDocHint.active = false
+		e.funcDocHint.message = ""
 		e.render()
 	}
 }
 
-// findFunctionDoc ищет определение функции и возвращает её сигнатуру + комментарий
-func (e *Editor) findFunctionDoc(lang Language, name string) string {
+// findFunctionDocWithFullDescription ищет документацию и возвращает краткую и полную версии
+func (e *Editor) findFunctionDocWithFullDescription(lang Language, name string) (shortDoc, fullDoc string) {
 	pattern := ""
 	switch lang {
 	case LangGo:
-		pattern = `(?m)(?P<comment>(?://[^\n]*\n)*)\s*(?P<signature>func\s+` + name + `\s*\([^\)]*\))`
+		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*(?P<signature>func\s*(?:\([^\)]*\)\s*)?` + name + `\s*\([^\)]*\))`
 	case LangC, LangCpp:
 		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*(?P<signature>(?:\w+\s+)+` + name + `\s*\([^\)]*\))`
 	case LangPython, LangRuby:
-		pattern = `(?m)(?P<comment>(?:#.*\n)*)\s*(?P<signature>def\s+` + name + `\s*\([^\)]*\))`
+		pattern = `(?m)(?P<comment>(?:#.*\n|""".*?"""\n|'''.*?'''\n)*)\s*(?P<signature>def\s+` + name + `\s*\([^\)]*\))`
 	case LangKotlin, LangSwift:
 		pattern = `(?m)(?P<comment>(?://[^\n]*\n|/\*.*?\*/\s*)*)\s*(?P<signature>fun\s+` + name + `\s*\([^\)]*\))`
 	case LangFortran:
@@ -77,11 +122,10 @@ func (e *Editor) findFunctionDoc(lang Language, name string) string {
 	case LangHTML:
 		pattern = `(?m)(?P<comment><!--.*?-->)\s*(?P<signature><\s*script.*` + name + `)`
 	default:
-		return ""
+		return "", ""
 	}
 
 	re := regexp.MustCompile(pattern)
-
 	for _, canvas := range e.canvases {
 		text := strings.Join(canvas.lines, "\n")
 		match := re.FindStringSubmatch(text)
@@ -90,7 +134,6 @@ func (e *Editor) findFunctionDoc(lang Language, name string) string {
 		}
 
 		var comment, signature string
-
 		for i, group := range re.SubexpNames() {
 			if group == "comment" {
 				comment = strings.TrimSpace(match[i])
@@ -102,37 +145,29 @@ func (e *Editor) findFunctionDoc(lang Language, name string) string {
 		}
 
 		if signature != "" {
+			shortDoc = signature
+			fullDoc = signature
 			if comment != "" {
-				return signature + "\n" + comment
+				fullDoc += "\n" + comment
+				shortDoc += " — " + firstLine(comment)
 			}
-			return signature
+			return shortDoc, fullDoc
 		}
 	}
+	return "", ""
+}
 
+// firstLine возвращает первую непустую строку комментария
+func firstLine(comment string) string {
+	lines := strings.Split(comment, "\n")
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			return l
+		}
+	}
 	return ""
 }
-
-
-// extractFunctionSignature получает сигнатуру функции (определение без тела)
-func extractFunctionSignature(block string, name string, lang Language) string {
-    lines := strings.Split(block, "\n")
-    for _, line := range lines {
-        line = strings.TrimSpace(line)
-        if strings.Contains(line, name) {
-            if strings.Contains(line, "{") {
-                line = strings.Split(line, "{")[0]
-            }
-            if strings.Contains(line, "//") {
-                line = strings.Split(line, "//")[0]
-            } else if strings.Contains(line, "#") {
-                line = strings.Split(line, "#")[0]
-            }
-            return strings.TrimSpace(line)
-        }
-    }
-    return ""
-}
-
 
 // extractFunctionName достает имя функции перед '('
 func extractFunctionName(before string) string {
@@ -141,10 +176,7 @@ func extractFunctionName(before string) string {
 	for i >= 0 && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
 		i--
 	}
-	name := strings.TrimSpace(string(runes[i+1:]))
-	if len(name) == 0 {
-		return ""
-	}
+	name := string(runes[i+1:])
 	return name
 }
 
@@ -158,6 +190,7 @@ func cleanCommentPrefix(comment string, lang Language) string {
 			lines[i] = strings.TrimPrefix(lines[i], "//")
 		case LangPython, LangRuby:
 			lines[i] = strings.TrimPrefix(lines[i], "#")
+			lines[i] = strings.Trim(lines[i], `"'`)
 		case LangLisp, LangAssembly:
 			lines[i] = strings.TrimPrefix(lines[i], ";")
 		case LangFortran:
@@ -171,57 +204,113 @@ func cleanCommentPrefix(comment string, lang Language) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderFunctionDocHint отображает подсказку прямо над строкой вызова функции.
+// renderFunctionDocHint отображает подсказку прямо над строкой вызова функции с подсветкой
 func (e *Editor) renderFunctionDocHint() {
-    if e.funcDocHint == nil || !e.funcDocHint.active {
-        return
-    }
+	if e.funcDocHint == nil || !e.funcDocHint.active {
+		return
+	}
 
-    doc := e.funcDocHint.content
-    if strings.TrimSpace(doc) == "" {
-        return
-    }
+	var lines []string
+	if e.funcDocHint.message != "" {
+		lines = []string{e.funcDocHint.message}
+	} else {
+		lines = strings.Split(e.funcDocHint.fullContent, "\n")
+	}
 
-    lines := strings.Split(doc, "\n")
+	displayRow, _, _ := e.cursorDisplayPosition()
+	yAbove := displayRow - e.offsetY
+	if yAbove <= len(lines) {
+		yAbove = len(lines)
+	}
 
-    displayRow, _, _ := e.cursorDisplayPosition()
+	startY := yAbove - len(lines) - 1
+	if startY < 0 {
+		startY = 0
+	}
+	if startY+len(lines) >= e.contentHeight-1 {
+		lines = lines[:max(1, e.contentHeight-startY-1)]
+	}
 
-    yAbove := displayRow - e.offsetY
-
-    if yAbove <= len(lines) {
-        yAbove = len(lines)
-    }
-
-    startY := yAbove - len(lines) + 1
-    if startY < 0 {
-        startY = 0
-    }
-
-    if startY+len(lines) >= e.contentHeight-1 {
-        lines = lines[:max(1, e.contentHeight-startY-1)]
-    }
-
-    style := styleComment
-
-    for i, line := range lines {
-        runes := []rune(line)
-        for x, r := range runes {
-            if x >= e.contentWidth {
-                break
-            }
-            e.screen.SetContent(x, startY+i, r, nil, style)
-        }
-
-        for x := len(runes); x < e.contentWidth; x++ {
-            e.screen.SetContent(x, startY+i, ' ', nil, styleComment)
-        }
-    }
+	for i, line := range lines {
+		styled := highlightSignature(line)
+		for x, r := range styled {
+			if x >= e.contentWidth {
+				break
+			}
+			e.screen.SetContent(x, startY+i, r.r, nil, r.style)
+		}
+		for x := len([]rune(line)); x < e.contentWidth; x++ {
+			e.screen.SetContent(x, startY+i, ' ', nil, styleComment)
+		}
+	}
 }
 
-// вспомогательная функция для безопасности
+// структура для подсветки символов
+type styledRune struct {
+	r     rune
+	style tcell.Style
+}
+
+// highlightSignature подсвечивает ключевые слова и типы
+func highlightSignature(line string) []styledRune {
+	keywords := []string{"func", "def", "function", "subroutine", "fun", "return"}
+	types := []string{"int", "float", "float64", "string", "bool", "char", "double", "var", "let", "Integer", "REAL"}
+
+	runes := []rune(line)
+	result := make([]styledRune, len(runes))
+	for i, r := range runes {
+		result[i] = styledRune{r, styleComment}
+	}
+
+	wordStart := -1
+	for i, r := range runes {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			if wordStart == -1 {
+				wordStart = i
+			}
+		} else {
+			if wordStart != -1 {
+				word := string(runes[wordStart:i])
+				if contains(keywords, word) {
+					for j := wordStart; j < i; j++ {
+						result[j].style = styleKeyword
+					}
+				} else if contains(types, word) {
+					for j := wordStart; j < i; j++ {
+						result[j].style = styleType
+					}
+				}
+				wordStart = -1
+			}
+		}
+	}
+	if wordStart != -1 {
+		word := string(runes[wordStart:])
+		if contains(keywords, word) {
+			for j := wordStart; j < len(runes); j++ {
+				result[j].style = styleKeyword
+			}
+		} else if contains(types, word) {
+			for j := wordStart; j < len(runes); j++ {
+				result[j].style = styleType
+			}
+		}
+	}
+	return result
+}
+
+func contains(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
 func max(a, b int) int {
-    if a > b {
-        return a
-    }
-    return b
+	if a > b {
+		return a
+	}
+	return b
 }
