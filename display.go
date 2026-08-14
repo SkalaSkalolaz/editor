@@ -2227,9 +2227,12 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
     		if pattern == "" {
     			return
     		}    
-            if searchAll {
+            isReplace := strings.Contains(trimmed, " -> ")
+            forceProjectSearch := e.inProjectOverview && !isReplace
+            
+            if searchAll || forceProjectSearch {
                 e.findInAllCanvases(pattern)
-            } else if strings.Contains(trimmed, " -> ") {
+            } else if isReplace {
                 parts := strings.SplitN(trimmed, " -> ", 2)
                 if len(parts) == 2 {
                     old := parts[0]
@@ -2242,7 +2245,7 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
             } else {
                 e.findInCurrentCanvas(pattern)
             }
-            
+
             if strings.TrimSpace(input) != "" {
                 e.lastSearch = input
             }
@@ -2542,6 +2545,24 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		// }
 	}
 	e.ensureVisible()
+}
+
+// isProjectOverviewCanvas определяет, является ли canvas служебной страницей PROJECT OVERVIEW.
+func (e *Editor) isProjectOverviewCanvas(c *Canvas) bool {
+    if c == nil || len(c.lines) == 0 {
+        return false
+    }
+
+    for _, line := range c.lines {
+        trimmed := strings.TrimSpace(line)
+        if trimmed == "" {
+            continue
+        }
+
+        return trimmed == "PROJECT OVERVIEW"
+    }
+
+    return false
 }
 
 // getSelectedText возвращает текст из текущего выделения.
@@ -3764,47 +3785,55 @@ func (e *Editor) findInCurrentCanvas(pattern string) {
 	}
 }
 
-// findInAllCanvases ищет текст во всех канвасах проекта (поддерживает многострочный поиск)
+// findInAllCanvases ищет текст во всех канвасах проекта.
+// Если поиск выполняется со страницы PROJECT OVERVIEW, сама страница overview пропускается.
 func (e *Editor) findInAllCanvases(pattern string) {
-	if pattern == "" {
-		return
-	}
+    if pattern == "" {
+        return
+    }
 
-	e.searchState = &SearchState{
-		pattern:        pattern,
-		matches:        make([]MatchPosition, 0),
-		currentMatch:   0,
-		active:         true,
-		projectMatches: make(map[string]int),
-		matchedFiles:   make([]string, 0),
-	}
+    e.searchState = &SearchState{
+        pattern:        pattern,
+        matches:        make([]MatchPosition, 0),
+        currentMatch:   0,
+        active:         true,
+        projectMatches: make(map[string]int),
+        matchedFiles:   make([]string, 0),
+    }
 
-	for canvasNum, canvas := range e.canvases {
-		canvasMatches := searchInJoinedText(canvas.lines, pattern, canvasNum)
-		if len(canvasMatches) > 0 {
-			e.searchState.matches = append(e.searchState.matches, canvasMatches...)
-			filename := canvas.filename
-			if filename == "" {
-				filename = fmt.Sprintf("Canvas %d", canvasNum)
-			} else {
-				filename = filepath.Base(filename)
-			}
-			e.searchState.projectMatches[filename] = len(canvasMatches)
-			e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
-		}
-	}
+    for canvasNum, canvas := range e.canvases {
+        // Если пользователь ищет со страницы PROJECT OVERVIEW,
+        // саму эту страницу не учитываем как файл проекта.
+        if e.inProjectOverview && canvasNum == e.currentCanvas && e.isProjectOverviewCanvas(canvas) {
+            continue
+        }
 
-	if len(e.searchState.matches) > 0 {
-		e.statusMessage(fmt.Sprintf("Found %d matches in %d files",
-			len(e.searchState.matches), len(e.searchState.projectMatches)))
-		e.jumpToMatch(0)
-	} else {
-		e.statusMessage("No matches found")
-		e.searchState.active = false
-	}
+        canvasMatches := searchInJoinedText(canvas.lines, pattern, canvasNum)
+        if len(canvasMatches) > 0 {
+            e.searchState.matches = append(e.searchState.matches, canvasMatches...)
+
+            filename := canvas.filename
+            if filename == "" {
+                filename = fmt.Sprintf("Canvas %d", canvasNum)
+            } else {
+                filename = filepath.Base(filename)
+            }
+
+            e.searchState.projectMatches[filename] = len(canvasMatches)
+            e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
+        }
+    }
+
+    if len(e.searchState.matches) > 0 {
+        e.statusMessage(fmt.Sprintf("Found %d matches in %d files",
+            len(e.searchState.matches), len(e.searchState.projectMatches)))
+        e.jumpToMatch(0)
+    } else {
+        e.statusMessage("No matches found")
+        e.searchState.active = false
+    }
 }
 
-// jumpToMatch переходит к указанному совпадению
 // jumpToMatch переходит к указанному совпадению
 func (e *Editor) jumpToMatch(matchIndex int) {
 	if e.searchState == nil || matchIndex < 0 || matchIndex >= len(e.searchState.matches) {
