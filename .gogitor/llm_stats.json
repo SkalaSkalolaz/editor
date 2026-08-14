@@ -5,6 +5,12 @@
       "avg_duration_ms": 49218,
       "avg_tokens": 1011,
       "updated": "2026-08-14T16:58:56.924856133+03:00"
+    },
+    "coder/commit/s": {
+      "count": 1,
+      "avg_duration_ms": 45100,
+      "avg_tokens": 258,
+      "updated": "2026-08-14T17:20:04.430104318+03:00"
     }
   }
 }

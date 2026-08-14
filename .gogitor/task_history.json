@@ -1,0 +1,51 @@
+[
+  {
+    "id": 1,
+    "time": "2026-08-14T16:58:57.256146075+03:00",
+    "query": ":git commit",
+    "mode": "git",
+    "success": true,
+    "iterations": 0,
+    "git_commit": "6065422"
+  },
+  {
+    "id": 2,
+    "time": "2026-08-14T17:04:47.586984666+03:00",
+    "query": ":git push",
+    "mode": "git",
+    "success": false,
+    "iterations": 0
+  },
+  {
+    "id": 3,
+    "time": "2026-08-14T17:14:35.558251699+03:00",
+    "query": ":help",
+    "mode": "help",
+    "success": true,
+    "iterations": 0
+  },
+  {
+    "id": 4,
+    "time": "2026-08-14T17:16:44.971999347+03:00",
+    "query": ":git create --desc Code Editor GO is a console text editor for professional development with support for a variety of languages                  \neasy-to-use navigation, editing commands, and built-in integration with LLM (Large Language Models) for code generation, analy\nsis, and translation.",
+    "mode": "git",
+    "success": false,
+    "iterations": 0
+  },
+  {
+    "id": 5,
+    "time": "2026-08-14T17:17:22.995260532+03:00",
+    "query": ":git create editor --desc Code Editor GO is a console text editor for professional development with support for a variety of languages                  \neasy-to-use navigation, editing commands, and built-in integration with LLM (Large Language Models) for code generation, analy\nsis, and translation.",
+    "mode": "git",
+    "success": true,
+    "iterations": 0
+  },
+  {
+    "id": 6,
+    "time": "2026-08-14T17:18:06.16004112+03:00",
+    "query": ":git push",
+    "mode": "git",
+    "success": true,
+    "iterations": 0
+  }
+]
