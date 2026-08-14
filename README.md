@@ -62,7 +62,7 @@ If the path points to the project directory, the editor will automatically uploa
 | Ctrl-O | Open the file / Project file 									|
 | Ctrl-N | New file / canvas 												|
 | Ctrl-Q | Exit 															|
-| Ctrl-F | Search / Replace (old -> new)                               		|
+| Ctrl-F | Find text                                                		|
 | Ctrl-G | Go to the line 													|
 | Ctrl-Z | Undo 	                                                        |
 | Ctrl-E | Redo		                                                        |

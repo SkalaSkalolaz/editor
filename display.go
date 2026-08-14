@@ -2211,47 +2211,34 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.handleExitWithCanvasCheck()
 
     case tcell.KeyCtrlF:
-    	e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
-    		trimmed := strings.TrimSpace(input)
-    		if trimmed == "" {
-    			e.lastSearch = input
-    			return
-    		}
-    		pattern, searchAll := e.parseSearchQuery(trimmed)
-    		if strings.Contains(pattern, `\n`) &&
-    			!strings.Contains(pattern, `\r`) &&
-    			!strings.Contains(pattern, `\\`) &&
-    			!strings.Contains(pattern, `"`) {
-    			pattern = strings.ReplaceAll(pattern, `\n`, "\n")
-    		}
-    		if pattern == "" {
-    			return
-    		}    
-            isReplace := strings.Contains(trimmed, " -> ")
-            forceProjectSearch := e.inProjectOverview && !isReplace
-            
+        e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
+            trimmed := strings.TrimSpace(input)
+            if trimmed == "" {
+                e.lastSearch = input
+                return
+            }
+            pattern, searchAll := e.parseSearchQuery(trimmed)
+            if strings.Contains(pattern, "\n") &&
+                !strings.Contains(pattern, `\r`) &&
+                !strings.Contains(pattern, `\\`) &&
+                !strings.Contains(pattern, `"`) {
+                pattern = strings.ReplaceAll(pattern, "\n", "\n")
+            }
+            if pattern == "" {
+                return
+            }
+            forceProjectSearch := e.inProjectOverview
             if searchAll || forceProjectSearch {
                 e.findInAllCanvases(pattern)
-            } else if isReplace {
-                parts := strings.SplitN(trimmed, " -> ", 2)
-                if len(parts) == 2 {
-                    old := parts[0]
-                    newS := parts[1]
-                    replaced := e.replaceAllOccurrences(old, newS)
-                    e.statusMessage(fmt.Sprintf("Replaced %d occurrence(s) of %q with %q", replaced, old, newS))
-                    e.prompt = nil
-                    return
-                }
             } else {
                 e.findInCurrentCanvas(pattern)
             }
-
             if strings.TrimSpace(input) != "" {
                 e.lastSearch = input
             }
         })
-    	e.ctrlAState = false
-		e.ctrlLState = false
+        e.ctrlAState = false
+        e.ctrlLState = false
 	case tcell.KeyCtrlL:
 		e.llmPromptWithPrevShow()
 	case tcell.KeyCtrlG:
