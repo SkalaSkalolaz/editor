@@ -1,26 +1,26 @@
+// llm.go
+// Назначение: Интеграция с Large Language Models (ИИ-моделями) для автодополнения и анализа кода.
+// Использует пакет llmclient для унифицированного взаимодействия с различными LLM-провайдерами.
+
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
-	"regexp"
 
+	"github.com/SkalaSkalolaz/llmclient"
 	"github.com/atotto/clipboard"
 )
 
-// llmQuery sends a query to the LLM.
-// llmQuery отправляет запрос LLM.
 func (e *Editor) llmQuery(instruction string) {
 	defer func() {
 		e.selectAllBeforeLLM = false
@@ -33,42 +33,40 @@ func (e *Editor) llmQuery(instruction string) {
 	if strings.TrimSpace(e.llmModel) == "" {
 		e.llmModel = "gemma3:4b"
 	}
-    payload := e.llmContext.BuildPayload(instruction, e.selectAllBeforeLLM, e)
+	payload := e.llmContext.BuildPayload(instruction, e.selectAllBeforeLLM, e)
 
 	_ = e.sendPayloadToLLM(payload)
 }
 
-// BuildPayload строит полный payload для LLM с учетом контекста
 func (lc *LLMContext) BuildPayload(baseInstruction string, includeEditorContent bool, editor *Editor) string {
-    var sb strings.Builder
-    
-    sb.WriteString(baseInstruction)
-    sb.WriteString("\n\n")
-    
-    if lc.UseInputFiles && len(lc.InputFiles) > 0 {
-        sb.WriteString("INPUT FILES CONTENT:\n")
-        sb.WriteString("====================\n\n")
-        
-        for filename, content := range lc.InputFiles {
-            sb.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
-            sb.WriteString(content)
-            sb.WriteString("\n\n")
-        }
-    }
-    
-    if includeEditorContent && editor != nil {
-        allText := strings.Join(editor.lines, "\n")
-        if strings.TrimSpace(allText) != "" {
-            sb.WriteString("EXISTING EDITOR CONTENT:\n")
-            sb.WriteString(allText)
-            sb.WriteString("\n\n")
-        }
-    }
-    
-    return sb.String()
+	var sb strings.Builder
+
+	sb.WriteString(baseInstruction)
+	sb.WriteString("\n\n")
+
+	if lc.UseInputFiles && len(lc.InputFiles) > 0 {
+		sb.WriteString("INPUT FILES CONTENT:\n")
+		sb.WriteString("====================\n\n")
+
+		for filename, content := range lc.InputFiles {
+			sb.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
+			sb.WriteString(content)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	if includeEditorContent && editor != nil {
+		allText := strings.Join(editor.lines, "\n")
+		if strings.TrimSpace(allText) != "" {
+			sb.WriteString("EXISTING EDITOR CONTENT:\n")
+			sb.WriteString(allText)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	return sb.String()
 }
 
-// llmQueryWithClipboard и явно добавляет содержимое буфера обмена (если оно не пустое).
 func (e *Editor) llmQueryWithClipboard(instruction string) {
 	defer func() {
 		e.selectAllBeforeLLM = false
@@ -82,66 +80,63 @@ func (e *Editor) llmQueryWithClipboard(instruction string) {
 		e.llmModel = "gemma3:4b"
 	}
 
-	   var payload strings.Builder
-    payload.WriteString(instruction)
-    payload.WriteString("\n\n")
-    
-    if cb := getClipboardData(); cb != "" {
-        payload.WriteString("DATA FROM CLIPBOARD:\n")
-        payload.WriteString(cb)
-        payload.WriteString("\n\n")
-    }
-    
-    if e.llmContext.UseInputFiles && len(e.llmContext.InputFiles) > 0 {
-        payload.WriteString("INPUT FILES CONTENT:\n")
-        payload.WriteString("====================\n\n")
-        
-        for filename, content := range e.llmContext.InputFiles {
-            payload.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
-            payload.WriteString(content)
-            payload.WriteString("\n\n")
-        }
-    }
-    
-    if e.selectAllBeforeLLM {
-        allText := strings.Join(e.lines, "\n")
-        if strings.TrimSpace(allText) != "" {
-            payload.WriteString("EXISTING TEXT:\n")
-            payload.WriteString(allText)
-            payload.WriteString("\n\n")
-        }
-    }
+	var payload strings.Builder
+	payload.WriteString(instruction)
+	payload.WriteString("\n\n")
+
+	if cb := getClipboardData(); cb != "" {
+		payload.WriteString("DATA FROM CLIPBOARD:\n")
+		payload.WriteString(cb)
+		payload.WriteString("\n\n")
+	}
+
+	if e.llmContext.UseInputFiles && len(e.llmContext.InputFiles) > 0 {
+		payload.WriteString("INPUT FILES CONTENT:\n")
+		payload.WriteString("====================\n\n")
+
+		for filename, content := range e.llmContext.InputFiles {
+			payload.WriteString(fmt.Sprintf("--- FILE: %s ---\n", filename))
+			payload.WriteString(content)
+			payload.WriteString("\n\n")
+		}
+	}
+
+	if e.selectAllBeforeLLM {
+		allText := strings.Join(e.lines, "\n")
+		if strings.TrimSpace(allText) != "" {
+			payload.WriteString("EXISTING TEXT:\n")
+			payload.WriteString(allText)
+			payload.WriteString("\n\n")
+		}
+	}
 
 	_ = e.sendPayloadToLLM(payload.String())
 }
 
-// sendPayloadToLLM — helper: отправляет payload к LLM, обрабатывает ошибки и вставляет ответ.
 func (e *Editor) sendPayloadToLLM(payload string) error {
-    if strings.TrimSpace(payload) == "" {
-        return fmt.Errorf("empty payload provided to LLM")
-    }
+	if strings.TrimSpace(payload) == "" {
+		return fmt.Errorf("empty payload provided to LLM")
+	}
 
-    e.statusMessage("Sending request to LLM...")
+	e.statusMessage("Sending request to LLM...")
 
-    out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel, e.llmKey)
-    if err != nil {
-        e.showError("LLM error: " + err.Error())
-        return err
-    }
+	out, err := SendMessageToLLM(payload, e.llmProvider, e.llmModel, e.llmKey)
+	if err != nil {
+		e.showError("LLM error: " + err.Error())
+		return err
+	}
 
-    resp := e.validateLLMResponse(string(out))
-    if strings.TrimSpace(resp) == "" {
-        e.showError("LLM returned an empty response after validation")
-        return fmt.Errorf("empty LLM response after validation")
-    }
+	resp := e.validateLLMResponse(string(out))
+	if strings.TrimSpace(resp) == "" {
+		e.showError("LLM returned an empty response after validation")
+		return fmt.Errorf("empty LLM response after validation")
+	}
 
-    e.statusMessage("LLM response received successfully")
-    e.insertLLMResponse(resp)
-    return nil
+	e.statusMessage("LLM response received successfully")
+	e.insertLLMResponse(resp)
+	return nil
 }
 
-// sendCommentToLLM sends a comment to the LLM.
-// sendCommentToLLM отправляет комментарий в LLM.
 func (e *Editor) sendCommentToLLM() {
 	linesAboveCursor := e.lines[:e.cy]
 	commentLines := []string{}
@@ -163,7 +158,6 @@ func (e *Editor) sendCommentToLLM() {
 	e.llmQuery(instruction)
 }
 
-// translationPrompt формирует единообразный LLM-промпт для перевода.
 func (e *Editor) translationPrompt(sourceText, targetLang string) string {
 	return fmt.Sprintf(
 		"Text requiring translation: %s, Translate the text to %s, apart from the translated text, nothing else is required of you.",
@@ -198,8 +192,6 @@ func (e *Editor) llmQueryTranslate(instruction string) (string, error) {
 	return resp, nil
 }
 
-// insertLLMResponse inserts the LLM response into the editor.
-// insertLLMResponse вставляет ответ LLM в редактор.
 func (e *Editor) insertLLMResponse(resp string) {
 	if e.contextMode {
 		e.insertContextualLLMResponse(resp, e.incompleteLine)
@@ -254,96 +246,69 @@ func (e *Editor) insertLLMResponse(resp string) {
 	e.ensureVisible()
 }
 
+func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
+	defer cancel()
+
+	provider, endpoint := resolveProviderAndEndpoint(provider)
+
+	opts := []llmclient.SendOption{
+		llmclient.WithTemperature(0.2),
+	}
+	if endpoint != "" {
+		opts = append(opts, llmclient.WithEndpoint(endpoint))
+	}
+
+	var response string
+	var err error
+
+	if endpoint != "" {
+		response, err = llmclient.SendWithContext(ctx, "custom", model, apiKey, "You are a helpful assistant.", message, opts...)
+	} else {
+		response, err = llmclient.SendWithContext(ctx, provider, model, apiKey, "You are a helpful assistant.", message, opts...)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("LLM request failed: %w", err)
+	}
+
+	return response, nil
+}
+
+func resolveProviderAndEndpoint(provider string) (string, string) {
+	switch provider {
+	case "pollinations":
+		return "pollinations", ""
+	case "openrouter":
+		baseURL := os.Getenv("OPENROUTER_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://openrouter.ai/api/v1"
+		}
+		return "openrouter", baseURL + "/chat/completions"
+	case "llm7":
+		baseURL := os.Getenv("LLM7_BASE_URL")
+		if baseURL == "" {
+			baseURL = "https://api.llm7.io/v1"
+		}
+		return "openai-compatible", baseURL + "/chat/completions"
+	case "ollama":
+		return "ollama", ""
+	default:
+		if isURL(provider) {
+			return "custom", provider
+		}
+		return provider, ""
+	}
+}
+
 func isURL(s string) bool {
-	u, err := url.Parse(s)
-	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
-// extractContentFromLLMResponse универсально распознаёт текст или JSON-ответ LLM
-// и извлекает текстовое содержимое ("content", "text" и т.д.).
-func extractContentFromLLMResponse(body []byte) (string, error) {
-	raw := strings.TrimSpace(string(body))
-	if raw == "" {
-		return "", errors.New("empty LLM response body")
-	}
-
-	if content, err := extractContentFromPossibleJSON(raw); err == nil && content != "" {
-		return content, nil
-	}
-
-	type aiResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-			Content string `json:"content"`
-			Text    string `json:"text"`
-			Delta   struct {
-				Content string `json:"content"`
-			} `json:"delta"`
-		} `json:"choices"`
-		Text   string `json:"text"`
-		Output string `json:"output"`
-		Data   string `json:"data"`
-	}
-
-	var r aiResp
-	if err := json.Unmarshal(body, &r); err == nil {
-		if len(r.Choices) > 0 {
-			choice := r.Choices[0]
-			if choice.Message.Content != "" {
-				return choice.Message.Content, nil
-			}
-			if choice.Delta.Content != "" {
-				return choice.Delta.Content, nil
-			}
-			if choice.Content != "" {
-				return choice.Content, nil
-			}
-			if choice.Text != "" {
-				return choice.Text, nil
-			}
-		}
-		if r.Text != "" {
-			return r.Text, nil
-		}
-		if r.Output != "" {
-			return r.Output, nil
-		}
-		if r.Data != "" {
-			return r.Data, nil
-		}
-	}
-
-	var simpleResp struct {
-		Content string `json:"content"`
-		Text    string `json:"text"`
-		Message string `json:"message"`
-		Result  string `json:"result"`
-	}
-	if err := json.Unmarshal(body, &simpleResp); err == nil {
-		if simpleResp.Content != "" {
-			return simpleResp.Content, nil
-		}
-		if simpleResp.Text != "" {
-			return simpleResp.Text, nil
-		}
-		if simpleResp.Message != "" {
-			return simpleResp.Message, nil
-		}
-		if simpleResp.Result != "" {
-			return simpleResp.Result, nil
-		}
-	}
-
-	return raw, nil
-}
-
-// extractContentFromPossibleJSON — улучшенный парсер LLM-ответов (распознаёт вложенный JSON, контент и text).
 func extractContentFromPossibleJSON(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", errors.New("empty response")
+		return "", fmt.Errorf("empty response")
 	}
 
 	reFenced := regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
@@ -382,14 +347,12 @@ func extractContentFromPossibleJSON(s string) (string, error) {
 		}
 	}
 
-	return "", errors.New("no JSON content found")
+	return "", fmt.Errorf("no JSON content found")
 }
 
-// findContentRecursive ищет первое строковое поле "content"/"text" рекурсивно
 func findContentRecursive(v interface{}) (string, bool) {
 	switch t := v.(type) {
 	case map[string]interface{}:
-		// Сначала проверяем приоритетные поля
 		priorityFields := []string{"content", "text", "message", "result", "output", "data"}
 		for _, field := range priorityFields {
 			if val, exists := t[field]; exists {
@@ -398,12 +361,10 @@ func findContentRecursive(v interface{}) (string, bool) {
 				}
 			}
 		}
-		
-		// Проверяем choices/chat_completion формат (OpenAI-совместимый)
+
 		if choices, exists := t["choices"]; exists {
 			if choicesSlice, ok := choices.([]interface{}); ok && len(choicesSlice) > 0 {
 				if firstChoice, ok := choicesSlice[0].(map[string]interface{}); ok {
-					// Проверяем message.content
 					if message, exists := firstChoice["message"]; exists {
 						if messageMap, ok := message.(map[string]interface{}); ok {
 							if content, exists := messageMap["content"]; exists {
@@ -413,7 +374,6 @@ func findContentRecursive(v interface{}) (string, bool) {
 							}
 						}
 					}
-					// Проверяем delta.content (streaming)
 					if delta, exists := firstChoice["delta"]; exists {
 						if deltaMap, ok := delta.(map[string]interface{}); ok {
 							if content, exists := deltaMap["content"]; exists {
@@ -423,7 +383,6 @@ func findContentRecursive(v interface{}) (string, bool) {
 							}
 						}
 					}
-					// Проверяем напрямую text/content
 					if text, exists := firstChoice["text"]; exists {
 						if s, ok := text.(string); ok && strings.TrimSpace(s) != "" {
 							return s, true
@@ -438,7 +397,6 @@ func findContentRecursive(v interface{}) (string, bool) {
 			}
 		}
 
-		// Рекурсивно обходим остальные поля
 		for _, val := range t {
 			if s, ok := findContentRecursive(val); ok {
 				return s, true
@@ -454,9 +412,8 @@ func findContentRecursive(v interface{}) (string, bool) {
 
 	case string:
 		str := strings.TrimSpace(t)
-		// Если строка выглядит как JSON, пробуем распарсить рекурсивно
-		if (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) || 
-		   (strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]")) {
+		if (strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}")) ||
+			(strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]")) {
 			var inner interface{}
 			if err := json.Unmarshal([]byte(str), &inner); err == nil {
 				if s, ok := findContentRecursive(inner); ok {
@@ -467,480 +424,6 @@ func findContentRecursive(v interface{}) (string, bool) {
 	}
 
 	return "", false
-}
-
-func sendMessageToLLMUsingURL(endpoint, model, message, apiKey string) (string, error) {
-	payload := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "user", "content": message},
-		},
-		"temperature": 0.2,
-		"top_p":       1.0,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	if apiKey != "" {
-		if strings.HasPrefix(apiKey, "sn-") {
-			req.Header.Set("Authorization", apiKey)
-		} else {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-	defer cancel()
-	req = req.WithContext(ctx)
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-		},
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("LLM URL request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("LLM URL returned status %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	content, err := extractContentFromLLMResponse(respBody)
-	if err != nil {
-		return "", err
-	}
-	return content, nil
-}
-
-func SendMessageToLLM(message, provider, model, apiKey string) (string, error) {
-	if isURL(provider) {
-		result, err := sendMessageToLLMUsingURL(provider, model, message, apiKey)
-		if err != nil {
-			return "", fmt.Errorf("URL provider error: %w", err)
-		}
-		return result, nil
-	}
-
-	parsePollinationsResponse := func(body []byte) (string, error) {
-		var m map[string]interface{}
-		if err := json.Unmarshal(body, &m); err != nil {
-			return "", fmt.Errorf("pollinations: invalid JSON: %w", err)
-		}
-		if t, ok := m["text"].(string); ok && t != "" {
-			return t, nil
-		}
-		if c, ok := m["content"].(string); ok && c != "" {
-			return c, nil
-		}
-		if choices, ok := m["choices"].([]interface{}); ok && len(choices) > 0 {
-			if first, ok := choices[0].(map[string]interface{}); ok {
-				if t, ok := first["text"].(string); ok && t != "" {
-					return t, nil
-				}
-				if msg, ok := first["message"].(map[string]interface{}); ok {
-					if t, ok := msg["content"].(string); ok && t != "" {
-						return t, nil
-					}
-				}
-			}
-		}
-		if out, ok := m["output"].(string); ok && out != "" {
-			return out, nil
-		}
-		if data, ok := m["data"].(string); ok && data != "" {
-			return data, nil
-		}
-		return "", errors.New("pollinations: could not recognize the response text")
-	}
-
-	parseOllamaResponse := func(body []byte) (string, error) {
-		type ollamaChatMessage struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		type ollamaChoice struct {
-			Message ollamaChatMessage `json:"message"`
-		}
-		type ollamaResponse struct {
-			Choices []ollamaChoice `json:"choices"`
-		}
-		var r ollamaResponse
-		if err := json.Unmarshal(body, &r); err == nil {
-			if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
-				return r.Choices[0].Message.Content, nil
-			}
-		}
-		var f map[string]interface{}
-		if err := json.Unmarshal(body, &f); err == nil {
-			if t, ok := f["text"].(string); ok && t != "" {
-				return t, nil
-			}
-			if t, ok := f["data"].(string); ok && t != "" {
-				return t, nil
-			}
-		}
-		return "", errors.New("ollama: could not recognize the response text")
-	}
-
-	sendPollinations := func(apiKeyArg string) (string, error) {
-		apiKey = apiKeyArg
-		if apiKey == "" {
-			apiKey = os.Getenv("POLLINATIONS_API_KEY")
-		}
-		url := "https://text.pollinations.ai/openai"
-		type pollinationsMessage struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		type pollinationsRequestBody struct {
-			Model    string                `json:"model"`
-			Messages []pollinationsMessage `json:"messages"`
-			Seed     int                   `json:"seed"`
-		}
-
-		body := pollinationsRequestBody{
-			Model: model,
-			Messages: []pollinationsMessage{
-				{Role: "system", Content: "You are a helpful assistant."},
-				{Role: "user", Content: message},
-			},
-			Seed: 42,
-		}
-
-		bodyBytes, err := json.Marshal(body)
-		if err != nil {
-			return "", fmt.Errorf("pollinations: failed to construct the request body: %w", err)
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			return "", fmt.Errorf("pollinations: failed to create the request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		if apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-		defer cancel()
-		req = req.WithContext(ctx)
-
-		client := &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("pollinations: error net: %w", err)
-		}
-		defer resp.Body.Close()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("pollinations: failed to read the response: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("pollinations: status %d: %s", resp.StatusCode, string(respBody))
-		}
-		parsed, err := parsePollinationsResponse(respBody)
-		if err != nil {
-			return "", fmt.Errorf("pollinations: failed to parse the response: %w", err)
-		}
-		return parsed, nil
-	}
-
-	sendOpenRouter := func(apiKeyArg string) (string, error) {
-		baseURL := os.Getenv("OPENROUTER_BASE_URL")
-		if baseURL == "" {
-			baseURL = "https://openrouter.ai/api/v1"
-		}
-		apiKey = apiKeyArg
-		if apiKey == "" {
-			apiKey = os.Getenv("OPENROUTER_API_KEY")
-		}
-		url := baseURL + "/chat/completions"
-		payload := map[string]interface{}{
-			"model": model,
-			"messages": []map[string]string{
-				{"role": "user", "content": message},
-			},
-			"temperature": 0.2,
-			"top_p":       1.0,
-		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return "", err
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		if apiKey != "" {
-			if strings.HasPrefix(apiKey, "sn-") {
-				req.Header.Set("Authorization", apiKey)
-			} else {
-				req.Header.Set("Authorization", "Bearer "+apiKey)
-			}
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-		defer cancel()
-		req = req.WithContext(ctx)
-
-		client := &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("LLM URL request failed: %w", err)
-		}
-		defer resp.Body.Close()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", err
-		}
-
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("LLM URL returned status %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		content, err := extractContentFromLLMResponse(respBody)
-		if err != nil {
-			return "", err
-		}
-		return content, nil
-	}
-
-	sendLLM7 := func(apiKeyArg string) (string, error) {
-		baseURL := os.Getenv("LLM7_BASE_URL")
-		if baseURL == "" {
-			baseURL = "https://api.llm7.io/v1"
-		}
-		apiKey = apiKeyArg
-		if apiKey == "" {
-			apiKey = os.Getenv("LLM7_API_KEY")
-		}
-		url := baseURL + "/chat/completions"
-
-		type llm7Message struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}
-		type llm7Request struct {
-			Model       string        `json:"model"`
-			Messages    []llm7Message `json:"messages"`
-			Temperature float64       `json:"temperature"`
-			TopP        float64       `json:"top_p"`
-		}
-
-		body := llm7Request{
-			Model: model,
-			Messages: []llm7Message{
-				{Role: "user", Content: message},
-			},
-			Temperature: 0.2,
-			TopP:        1.0,
-		}
-
-		bodyBytes, err := json.Marshal(body)
-		if err != nil {
-			return "", fmt.Errorf("llm7: failed to form the request body: %w", err)
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			return "", fmt.Errorf("llm7: failed to create the request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		if apiKey != "" {
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		} else {
-			apiKey = "unused"
-			req.Header.Set("Authorization", "Bearer "+apiKey)
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
-		defer cancel()
-		req = req.WithContext(ctx)
-
-		client := &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("llm7: error net: %w", err)
-		}
-		defer resp.Body.Close()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("llm7: failed to read the response: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("llm7: status %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		type llm7Response struct {
-			Choices []struct {
-				Message struct {
-					Role    string `json:"role"`
-					Content string `json:"content"`
-				} `json:"message"`
-			} `json:"choices"`
-		}
-		var r llm7Response
-		if err := json.Unmarshal(respBody, &r); err == nil {
-			if len(r.Choices) > 0 && r.Choices[0].Message.Content != "" {
-				return r.Choices[0].Message.Content, nil
-			}
-		}
-		var f map[string]interface{}
-		if err := json.Unmarshal(respBody, &f); err == nil {
-			if choices, ok := f["choices"].([]interface{}); ok && len(choices) > 0 {
-				if first, ok := choices[0].(map[string]interface{}); ok {
-					if msg, ok := first["message"].(map[string]interface{}); ok {
-						if t, ok := msg["content"].(string); ok && t != "" {
-							return t, nil
-						}
-					}
-					if t, ok := first["text"].(string); ok && t != "" {
-						return t, nil
-					}
-				}
-			}
-			if t, ok := f["text"].(string); ok && t != "" {
-				return t, nil
-			}
-			if t, ok := f["data"].(string); ok && t != "" {
-				return t, nil
-			}
-		}
-		return "", errors.New("llm7: failed to recognize the response text")
-	}
-
-	sendOllama := func() (string, error) {
-		url := "http://localhost:11434/v1/chat/completions"
-
-		reqBody := map[string]interface{}{
-			"model": model,
-			"messages": []map[string]string{
-				{"role": "user", "content": message},
-			},
-			"temperature": 0.2,
-			"top_p":       1.0,
-		}
-		bodyBytes, err := json.Marshal(reqBody)
-		if err != nil {
-			return "", fmt.Errorf("ollama: could not generate the request body: %w", err)
-		}
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			return "", fmt.Errorf("ollama: failed to create the request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 480*time.Second)
-		defer cancel()
-		req = req.WithContext(ctx)
-
-		client := &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment,
-			},
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return "", fmt.Errorf("ollama: error net: %w", err)
-		}
-		defer resp.Body.Close()
-
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("ollama: reading the response failed: %w", err)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return "", fmt.Errorf("ollama: status %d: %s", resp.StatusCode, string(respBody))
-		}
-
-		parsed, err := parseOllamaResponse(respBody)
-		if err != nil {
-			return "", fmt.Errorf("ollama: failed to parse the response: %w", err)
-		}
-		return parsed, nil
-	}
-
-	switch provider {
-	case "pollinations":
-		result, err := sendPollinations(apiKey)
-		if err != nil {
-			return "", fmt.Errorf("Pollinations error: %w", err)
-		}
-		content, parseErr := extractContentFromLLMResponse([]byte(result))
-		if parseErr != nil {
-			return "", fmt.Errorf("Pollinations response parsing error: %w", parseErr)
-		}
-		return content, nil
-	case "llm7":
-		result, err := sendLLM7(apiKey)
-		if err != nil {
-			return "", fmt.Errorf("LLM7 error: %w", err)
-		}
-		content, parseErr := extractContentFromLLMResponse([]byte(result))
-		if parseErr != nil {
-			return "", fmt.Errorf("LLM7 response parsing error: %w", parseErr)
-		}
-		return content, nil
-	case "openrouter":
-		result, err := sendOpenRouter(apiKey)
-		if err != nil {
-			return "", fmt.Errorf("OpenRouter error: %w", err)
-		}
-		content, parseErr := extractContentFromLLMResponse([]byte(result))
-		if parseErr != nil {
-			return "", fmt.Errorf("OpenRouter response parsing error: %w", parseErr)
-		}
-		return content, nil
-	case "ollama":
-		result, err := sendOllama()
-		if err != nil {
-			return "", fmt.Errorf("Ollama error: %w", err)
-		}
-		content, parseErr := extractContentFromLLMResponse([]byte(result))
-		if parseErr != nil {
-			return "", fmt.Errorf("Ollama response parsing error: %w", parseErr)
-		}
-		return content, nil
-	default:
-		return "", fmt.Errorf("unsupported provider: %s", provider)
-	}
 }
 
 func nameModelPollinations() {
@@ -1083,8 +566,6 @@ func nameModelOpenRouter() {
 	}
 }
 
-// llmQueryWithProjectContext — отправляет проектный контекст без добавления clipboard по умолчанию.
-// (Если нужно — можно вызвать llmQueryWithProjectContextIncludeClipboard ниже.)
 func (e *Editor) llmQueryWithProjectContext(instruction string) {
 	defer func() {
 		e.selectAllBeforeLLM = false
@@ -1098,7 +579,6 @@ func (e *Editor) llmQueryWithProjectContext(instruction string) {
 		e.llmModel = "gemma3:4b"
 	}
 
-	// Синхронизируем редактор → канвас перед сбором контекста
 	e.syncEditorToCanvas()
 
 	e.statusMessage("Building project context...")
@@ -1114,7 +594,6 @@ func (e *Editor) llmQueryWithProjectContext(instruction string) {
 	_ = e.sendPayloadToLLM(payload)
 }
 
-// ProcessStreamingLLM обрабатывает LLM-запросы через стандартные потоки ввода-вывода
 func ProcessStreamingLLM(provider, model, apiKey string, useClipboardData bool, inputFiles string) error {
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -1140,16 +619,15 @@ func ProcessStreamingLLM(provider, model, apiKey string, useClipboardData bool, 
 	if err != nil {
 		return fmt.Errorf("LLM request failed: %w", err)
 	}
-	
+
 	fmt.Print(response)
 	return nil
 }
 
-// showThinkingIndicator показывает анимированный индикатор "мышления"
 func showThinkingIndicator(done chan bool) {
 	frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 	i := 0
-	
+
 	for {
 		select {
 		case <-done:
@@ -1158,14 +636,13 @@ func showThinkingIndicator(done chan bool) {
 		default:
 			frame := frames[i%len(frames)]
 			fmt.Fprintf(os.Stderr, "\r%s LLM is thinking...", frame)
-			
+
 			i++
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
-// processStreamInput обрабатывает входные данные для потокового режима
 func processStreamInput(instruction, streamData, inputFiles string) string {
 	var payload strings.Builder
 	payload.WriteString(instruction)
@@ -1192,7 +669,6 @@ func processStreamInput(instruction, streamData, inputFiles string) string {
 	return payload.String()
 }
 
-// readInputFiles читает файлы из указанного пути (файл или директория)
 func readInputFiles(inputPath string) (map[string]string, error) {
 	files := make(map[string]string)
 
@@ -1214,7 +690,6 @@ func readInputFiles(inputPath string) (map[string]string, error) {
 	return files, nil
 }
 
-// getClipboardData безопасно получает данные из буфера обмена
 func getClipboardData() string {
 	data, err := clipboard.ReadAll()
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode"
 	"sort"
+	"runtime"
 
 	"github.com/atotto/clipboard"
 	"github.com/gdamore/tcell/v2"
@@ -1195,6 +1196,17 @@ func (em *ExitManager) cancelExit() {
 func (e *Editor) statusBar() (string, string, string) {
     left := "EDITOR " + Version
     canvasInfo := fmt.Sprintf(" [Canvas %d/%d]", e.currentCanvas, len(e.canvases))
+    
+    name := e.filename
+    if name == "" {
+        name = "[new file]"
+    } else {
+        // Сократить длинные пути для лучшего отображения
+        if len(name) > 30 {
+            name = "..." + name[len(name)-27:]
+        }
+    }
+    
     if e.searchState != nil && e.searchState.active && len(e.searchState.projectMatches) > 0 {
         filesWithMatches := len(e.searchState.projectMatches)
         canvasInfo += fmt.Sprintf(" [F:%d]", filesWithMatches)
@@ -1207,7 +1219,7 @@ func (e *Editor) statusBar() (string, string, string) {
         left += githubInfo
     }
 
-    name := e.filename
+    name = e.filename
     if name == "" {
         name = "[new file]"
     }
@@ -1335,18 +1347,51 @@ func (e *Editor) formatFilesInfoForTwoLines() (string, string) {
     return line2, line1
 }
 
+// readClipboardLinux пытается прочитать буфер обмена через xclip или xsel
+func (e *Editor) readClipboardLinux() (string, error) {
+    // Сначала пробуем xclip
+    cmd := exec.Command("xclip", "-o", "-selection", "clipboard")
+    output, err := cmd.Output()
+    if err == nil {
+        return string(output), nil
+    }
+    
+    // Пробуем xsel
+    cmd = exec.Command("xsel", "--clipboard", "--output")
+    output, err = cmd.Output()
+    if err == nil {
+        return string(output), nil
+    }
+    
+    return "", fmt.Errorf("no clipboard utility available (install xclip or xsel)")
+}
+
+// isLinux проверяет, работает ли на Linux
+func (e *Editor) isLinux() bool {
+    return strings.Contains(runtime.GOOS, "linux")
+}
 
 // pasteFromClipboard reads text from the system clipboard and inserts it at the cursor position.
 // pasteFromClipboard читает текст из системного буфера обмена и вставляет его в позицию курсора.
 func (e *Editor) pasteFromClipboard() {
-	text, err := clipboard.ReadAll()
-	if err != nil {
-		e.statusMessage("Insert error: " + err.Error())
-		return
-	}
+	 var text string
+    	var err error
+    
+    	// Попытка чтения из буфера обмена
+    	text, err = clipboard.ReadAll()
+    	if err != nil {
+        	// Fallback для Linux: попробовать xclip или xsel
+        	if e.isLinux() {
+            	text, err = e.readClipboardLinux()
+        	}
+        	if err != nil {
+            		e.statusMessage("Insert error: " + err.Error())
+            	return
+        	}
+    	}	
 
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
+    	text = strings.ReplaceAll(text, "\r\n", "\n")
+    	text = strings.ReplaceAll(text, "\r", "\n")
 
 	pasteLines := strings.Split(text, "\n")
 	if len(pasteLines) == 0 {
@@ -1393,42 +1438,63 @@ func (e *Editor) showTerminalPrompt() {
 }
 
 func (e *Editor) executeTerminalCommand(command string) {
-	if strings.TrimSpace(command) == "" {
-		return
-	}
+    if strings.TrimSpace(command) == "" {
+        return
+    }
 
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return
-	}
-	cmdName := parts[0]
-	var args []string
-	if len(parts) > 1 {
-		args = parts[1:]
-	}
+    parts := strings.Fields(command)
+    if len(parts) == 0 {
+        return
+    }
+    
+    cmdName := parts[0]
+    var args []string
+    if len(parts) > 1 {
+        args = parts[1:]
+    }
 
-	cmd := exec.Command(cmdName, args...)
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
+    // Установить корректную оболочку в зависимости от ОС
+    var cmd *exec.Cmd
+    if e.isLinux() || e.isMacOS() {
+        // Использовать shell для поддержки pipes и других возможностей
+        cmd = exec.Command("sh", "-c", command)
+    } else {
+        cmd = exec.Command(cmdName, args...)
+    }
 
-	err := cmd.Run()
+    var out bytes.Buffer
+    var stderr bytes.Buffer
+    cmd.Stdout = &out
+    cmd.Stderr = &stderr
 
-	result := ""
-	if out.Len() > 0 {
-		result += out.String()
-	}
-	if stderr.Len() > 0 {
-		result += stderr.String()
-	}
-	if err != nil {
-		result += fmt.Sprintf("\nError: %v", err)
-	}
+    err := cmd.Run()
 
-	if result != "" {
-		e.insertLLMResponse(result)
-	}
+    result := ""
+    if out.Len() > 0 {
+        result += out.String()
+    }
+    if stderr.Len() > 0 {
+        result += stderr.String()
+    }
+    if err != nil {
+        result += fmt.Sprintf("\nError: %v", err)
+    }
+
+    if result != "" {
+        e.insertLLMResponse(result)
+    }
+}
+
+func (e *Editor) isCommandAvailable(name string) bool {
+    _, err := exec.LookPath(name)
+    return err == nil
+}
+
+
+
+// isMacOS проверяет, работает ли на macOS
+func (e *Editor) isMacOS() bool {
+    return strings.Contains(runtime.GOOS, "darwin")
 }
 
 func (e *Editor) handleTerminalInput(ev *tcell.EventKey) {
@@ -1475,7 +1541,13 @@ func (e *Editor) handlePromptInput(ev *tcell.EventKey) {
 			text = strings.ReplaceAll(text, "\r\n", "\n")
 			text = strings.ReplaceAll(text, "\r", "\n")
 			if e.prompt != nil {
-				e.prompt.Value = text
+				if e.prompt.Label == "Search" {
+					// Для поиска — ЗАМЕНЯЕМ содержимое полностью
+					e.prompt.Value = text
+				} else {
+					// Для остальных prompt'ов — добавляем
+					e.prompt.Value += text
+				}
 				e.render()
 			} else if e.multiLinePrompt != nil {
 				e.multiLinePrompt.Value += text
@@ -1570,6 +1642,7 @@ func (e *Editor) cutLine() {
 
 // openFile открывает файл в текущем канвасе.
 func (e *Editor) openFile(path string) {
+	path = e.resolveHomeDir(path)
 	if e.filename != "" {
 		if info, err := os.Stat(e.filename); err == nil && info.IsDir() {
 			if !filepath.IsAbs(path) {
@@ -1640,38 +1713,53 @@ func (e *Editor) save() error {
 
 // persist writes the content to the file with GitHub project support
 func (e *Editor) persist() error {
-	if e.githubProject != nil && e.filename != "" {
-		absPath := e.filename
-		if !filepath.IsAbs(absPath) {
-			absPath = filepath.Join(e.githubProject.LocalPath, absPath)
-		}
+    if e.githubProject != nil && e.filename != "" {
+        absPath := e.filename
+        if !filepath.IsAbs(absPath) {
+            absPath = filepath.Join(e.githubProject.LocalPath, absPath)
+        }
 
-		projectBase := e.githubProject.LocalPath
-		if !strings.HasPrefix(absPath, projectBase) {
-			return fmt.Errorf("file is outside project directory")
-		}
+        projectBase := e.githubProject.LocalPath
+        if !strings.HasPrefix(absPath, projectBase) {
+            return fmt.Errorf("file is outside project directory")
+        }
 
-		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
-			return fmt.Errorf("failed to create directory: %w", err)
-		}
+        // Используем более безопасные разрешения
+        if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+            return fmt.Errorf("failed to create directory: %w", err)
+        }
 
-		content := strings.Join(e.lines, "\n")
-		err := os.WriteFile(absPath, []byte(content), 0644)
-		if err != nil {
-			e.showError("Unable to save the file: " + err.Error())
-			return err
-		}
-	} else {
-		content := strings.Join(e.lines, "\n")
-		err := os.WriteFile(e.filename, []byte(content), 0644)
-		if err != nil {
-			e.showError("Unable to save the file: " + err.Error())
-			return err
-		}
-	}
+        content := strings.Join(e.lines, "\n")
+        // Безопасные разрешения для файлов
+        err := os.WriteFile(absPath, []byte(content), 0644)
+        if err != nil {
+            e.showError("Unable to save the file: " + err.Error())
+            return err
+        }
+    } else {
+        content := strings.Join(e.lines, "\n")
+        // Безопасные разрешения для файлов
+        err := os.WriteFile(e.filename, []byte(content), 0644)
+        if err != nil {
+            e.showError("Unable to save the file: " + err.Error())
+            return err
+        }
+    }
 
-	e.dirty = false
-	return nil
+    e.dirty = false
+    return nil
+}
+
+// resolveHomeDir заменяет ~ на домашнюю директорию
+func (e *Editor) resolveHomeDir(path string) string {
+    if strings.HasPrefix(path, "~") {
+        home, err := os.UserHomeDir()
+        if err != nil {
+            return path
+        }
+        return filepath.Join(home, path[1:])
+    }
+    return path
 }
 
 // backspace deletes the character before the cursor.
@@ -2121,20 +2209,24 @@ func (e *Editor) handleKey(ev *tcell.EventKey) {
 		e.ctrlAState = false
 		e.ctrlLState = false
 		e.handleExitWithCanvasCheck()
-	case tcell.KeyCtrlF:
-        e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
-            trimmed := strings.TrimSpace(input)
-            if trimmed == "" {
-                e.lastSearch = input
-                return
-            }
-    
-            pattern, searchAll := e.parseSearchQuery(trimmed)
-            
-            if pattern == "" {
-                return
-            }
-    
+
+    case tcell.KeyCtrlF:
+    	e.promptShowWithInitial("Search", e.lastSearch, func(input string) {
+    		trimmed := strings.TrimSpace(input)
+    		if trimmed == "" {
+    			e.lastSearch = input
+    			return
+    		}
+    		pattern, searchAll := e.parseSearchQuery(trimmed)
+    		if strings.Contains(pattern, `\n`) &&
+    			!strings.Contains(pattern, `\r`) &&
+    			!strings.Contains(pattern, `\\`) &&
+    			!strings.Contains(pattern, `"`) {
+    			pattern = strings.ReplaceAll(pattern, `\n`, "\n")
+    		}
+    		if pattern == "" {
+    			return
+    		}    
             if searchAll {
                 e.findInAllCanvases(pattern)
             } else if strings.Contains(trimmed, " -> ") {
@@ -3490,93 +3582,124 @@ func (e *Editor) drawStructurePanel(display []DisplayRow, contentRows int) {
 	}
 }
 
-// highlightSearchMatches подсвечивает все совпадения в тексте
+// highlightSearchMatches подсвечивает все совпадения в тексте,
+// включая многострочные, используя сохранённые позиции из searchState.matches.
 func (e *Editor) highlightSearchMatches(display []DisplayRow, contentRows int) {
-    if e.searchState == nil || !e.searchState.active || e.searchState.pattern == "" {
-        return
-    }
+	if e.searchState == nil || !e.searchState.active || len(e.searchState.matches) == 0 {
+		return
+	}
 
-    pattern := strings.ToLower(e.searchState.pattern)
-    
-    for i := 0; i < contentRows; i++ {
-        di := e.offsetY + i
-        if di >= len(display) {
-            continue
-        }
-        
-        row := display[di]
-        line := e.lines[row.lineIndex]
-        lineLower := strings.ToLower(line)
-        
-        start := 0
-        for {
-            pos := strings.Index(lineLower[start:], pattern)
-            if pos == -1 {
-                break
-            }
-            
-            absPos := start + pos
-            endPos := absPos + len(pattern)
-            
-            segStart := 0
-            for s := 0; s < row.segIndex; s++ {
-                segStart += len([]rune(e.wrapLine(e.lines[row.lineIndex])[s]))
-            }
-            segEnd := segStart + len([]rune(row.text))
-            
-            if absPos >= segStart && absPos < segEnd {
-                segPos := absPos - segStart
-                segEndPos := endPos - segStart
-                if segEndPos > len([]rune(row.text)) {
-                    segEndPos = len([]rune(row.text))
-                }
-                
-                xPos := e.lineNumbersWidth
-                runes := []rune(row.text)
-                
-                for j := 0; j < segPos && xPos < e.contentWidth; j++ {
-                    r := runes[j]
-                    if r == '\t' {
-                        xPos += 4 - (xPos % 4)
-                    } else {
-                        xPos += runewidth.RuneWidth(r)
-                    }
-                }
-                
-                for j := segPos; j < segEndPos && xPos < e.contentWidth; j++ {
-                    r := runes[j]
-                    rw := runewidth.RuneWidth(r)
-                    
-                    for k := 0; k < rw && xPos < e.contentWidth; k++ {
-                        drawRune := r
-                        if k > 0 {
-                            drawRune = ' '
-                        }
-                        e.screen.SetContent(xPos+k, i+1, drawRune, nil, 
-                            tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack))
-                    }
-                    xPos += rw
-                }
-            }
-            
-            start = absPos + len(pattern)
-            if start >= len(lineLower) {
-                break
-            }
-        }
-    }
+	highlightStyle := tcell.StyleDefault.Background(tcell.ColorWhite).Foreground(tcell.ColorBlack)
+
+	for i := 0; i < contentRows; i++ {
+		di := e.offsetY + i
+		if di >= len(display) {
+			continue
+		}
+		row := display[di]
+		lineIdx := row.lineIndex
+
+		if lineIdx < 0 || lineIdx >= len(e.lines) {
+			continue
+		}
+
+		// Определяем рунный диапазон данного сегмента (wrapped line)
+		wrappedLines := e.wrapLine(e.lines[lineIdx])
+		segStartRune := 0
+		for s := 0; s < row.segIndex && s < len(wrappedLines); s++ {
+			segStartRune += len([]rune(wrappedLines[s]))
+		}
+		segRunes := []rune(row.text)
+		segEndRune := segStartRune + len(segRunes)
+
+		// Проверяем каждое совпадение
+		for _, match := range e.searchState.matches {
+			if match.canvas != e.currentCanvas {
+				continue
+			}
+			// Совпадение не пересекает эту строку
+			if match.endLine < lineIdx || match.line > lineIdx {
+				continue
+			}
+
+			// Определяем диапазон подсветки в пределах данной логической строки
+			var hlStart, hlEnd int
+			if match.line == match.endLine {
+				// Однострочное совпадение
+				hlStart = match.start
+				hlEnd = match.endCol
+			} else if lineIdx == match.line {
+				// Первая строка многострочного совпадения
+				hlStart = match.start
+				hlEnd = len([]rune(e.lines[lineIdx]))
+			} else if lineIdx == match.endLine {
+				// Последняя строка
+				hlStart = 0
+				hlEnd = match.endCol
+			} else {
+				// Промежуточная строка — подсвечиваем целиком
+				hlStart = 0
+				hlEnd = len([]rune(e.lines[lineIdx]))
+			}
+
+			// Пересечение с текущим сегментом
+			if hlEnd <= segStartRune || hlStart >= segEndRune {
+				continue
+			}
+
+			// Обрезаем до границ сегмента
+			drawStart := hlStart - segStartRune
+			if drawStart < 0 {
+				drawStart = 0
+			}
+			drawEnd := hlEnd - segStartRune
+			if drawEnd > len(segRunes) {
+				drawEnd = len(segRunes)
+			}
+
+			// Рисуем подсветку
+			xPos := e.lineNumbersWidth
+			for j := 0; j < drawStart && xPos < e.contentWidth; j++ {
+				r := segRunes[j]
+				if r == '\t' {
+					xPos += 4 - (xPos % 4)
+				} else {
+					xPos += runewidth.RuneWidth(r)
+				}
+			}
+			for j := drawStart; j < drawEnd && xPos < e.contentWidth; j++ {
+				r := segRunes[j]
+				var rw int
+				if r == '\t' {
+					rw = 4 - (xPos % 4)
+				} else {
+					rw = runewidth.RuneWidth(r)
+				}
+				for k := 0; k < rw && xPos+k < e.contentWidth; k++ {
+					drawRune := r
+					if k > 0 {
+						drawRune = ' '
+					}
+					e.screen.SetContent(xPos+k, i+1, drawRune, nil, highlightStyle)
+				}
+				xPos += rw
+			}
+		}
+	}
 }
 
 // markSearchLinesInNumbers отмечает строки с совпадениями в нумерации
 func (e *Editor) markSearchLinesInNumbers(display []DisplayRow, contentRows int) {
-    if e.searchState == nil || !e.searchState.active {
-        return
-    }
+	if e.searchState == nil || !e.searchState.active {
+		return
+	}
 
     lineMatches := make(map[int]bool)
     for _, match := range e.searchState.matches {
         if match.canvas == e.currentCanvas {
-            lineMatches[match.line] = true
+            for ln := match.line; ln <= match.endLine; ln++ {
+                lineMatches[ln] = true
+            }
         }
     }
 
@@ -3617,151 +3740,119 @@ func (e *Editor) markSearchLinesInNumbers(display []DisplayRow, contentRows int)
     }
 }
 
-
-// findInCurrentCanvas ищет текст в текущем канвасе
+// findInCurrentCanvas ищет текст в текущем канвасе (поддерживает многострочный поиск)
 func (e *Editor) findInCurrentCanvas(pattern string) {
-    if pattern == "" {
-        return
-    }
+	if pattern == "" {
+		return
+	}
+	e.searchState = &SearchState{
+		pattern:        pattern,
+		matches:        make([]MatchPosition, 0),
+		currentMatch:   0,
+		active:         true,
+		projectMatches: make(map[string]int),
+	}
 
-    e.searchState = &SearchState{
-        pattern:        pattern,
-        matches:        make([]MatchPosition, 0),
-        currentMatch:   0,
-        active:         true,
-        projectMatches: make(map[string]int),
-    }
+	e.searchState.matches = searchInJoinedText(e.lines, pattern, e.currentCanvas)
 
-    patternLower := strings.ToLower(pattern)
-    
-    for lineIdx, line := range e.lines {
-        lineLower := strings.ToLower(line)
-        start := 0
-        for {
-            pos := strings.Index(lineLower[start:], patternLower)
-            if pos == -1 {
-                break
-            }
-            
-            absPos := start + pos
-            e.searchState.matches = append(e.searchState.matches, MatchPosition{
-                line:   lineIdx,
-                start:  absPos,
-                end:    absPos + len(pattern),
-                canvas: e.currentCanvas,
-            })
-            
-            start = absPos + len(pattern)
-            if start >= len(lineLower) {
-                break
-            }
-        }
-    }
-
-    if len(e.searchState.matches) > 0 {
-        e.searchState.projectMatches[e.filename] = len(e.searchState.matches)
-        e.jumpToMatch(0)
-    }
+	if len(e.searchState.matches) > 0 {
+		e.searchState.projectMatches[e.filename] = len(e.searchState.matches)
+		e.jumpToMatch(0)
+	} else {
+		e.statusMessage("Not found: " + pattern)
+		e.searchState.active = false
+	}
 }
 
-// findInAllCanvases ищет текст во всех канвасах проекта
+// findInAllCanvases ищет текст во всех канвасах проекта (поддерживает многострочный поиск)
 func (e *Editor) findInAllCanvases(pattern string) {
-    if pattern == "" {
-        return
-    }
+	if pattern == "" {
+		return
+	}
 
-    oldCanvas := e.currentCanvas
-    defer func() {
-        e.currentCanvas = oldCanvas
-        e.syncCanvasToEditor()
-    }()
+	e.searchState = &SearchState{
+		pattern:        pattern,
+		matches:        make([]MatchPosition, 0),
+		currentMatch:   0,
+		active:         true,
+		projectMatches: make(map[string]int),
+		matchedFiles:   make([]string, 0),
+	}
 
-    e.searchState = &SearchState{
-        pattern:        pattern,
-        matches:        make([]MatchPosition, 0),
-        currentMatch:   0,
-        active:         true,
-        projectMatches: make(map[string]int),
-        matchedFiles:   make([]string, 0),
-    }
+	for canvasNum, canvas := range e.canvases {
+		canvasMatches := searchInJoinedText(canvas.lines, pattern, canvasNum)
+		if len(canvasMatches) > 0 {
+			e.searchState.matches = append(e.searchState.matches, canvasMatches...)
+			filename := canvas.filename
+			if filename == "" {
+				filename = fmt.Sprintf("Canvas %d", canvasNum)
+			} else {
+				filename = filepath.Base(filename)
+			}
+			e.searchState.projectMatches[filename] = len(canvasMatches)
+			e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
+		}
+	}
 
-    patternLower := strings.ToLower(pattern)
-
-    for canvasNum, canvas := range e.canvases {
-        e.currentCanvas = canvasNum
-        e.syncCanvasToEditor()
-
-        matchCount := 0
-        for lineIdx, line := range e.lines {
-            lineLower := strings.ToLower(line)
-            start := 0
-            for {
-                pos := strings.Index(lineLower[start:], patternLower)
-                if pos == -1 {
-                    break
-                }
-                
-                absPos := start + pos
-                e.searchState.matches = append(e.searchState.matches, MatchPosition{
-                    line:   lineIdx,
-                    start:  absPos,
-                    end:    absPos + len(pattern),
-                    canvas: canvasNum,
-                })
-                matchCount++
-                
-                start = absPos + len(pattern)
-                if start >= len(lineLower) {
-                    break
-                }
-            }
-        }
-
-        if matchCount > 0 {
-            filename := canvas.filename
-            if filename == "" {
-                filename = fmt.Sprintf("Canvas %d", canvasNum)
-            } else {
-                filename = filepath.Base(filename)
-            }
-            e.searchState.projectMatches[filename] = matchCount
-            e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
-        }
-    }
-
-    if len(e.searchState.matches) > 0 {
-        e.statusMessage(fmt.Sprintf("Found %d matches in %d files", 
-            len(e.searchState.matches), len(e.searchState.projectMatches)))
-        e.jumpToMatch(0)
-    } else {
-        e.statusMessage("No matches found")
-        e.searchState.active = false
-    }
+	if len(e.searchState.matches) > 0 {
+		e.statusMessage(fmt.Sprintf("Found %d matches in %d files",
+			len(e.searchState.matches), len(e.searchState.projectMatches)))
+		e.jumpToMatch(0)
+	} else {
+		e.statusMessage("No matches found")
+		e.searchState.active = false
+	}
 }
 
 // jumpToMatch переходит к указанному совпадению
+// jumpToMatch переходит к указанному совпадению
 func (e *Editor) jumpToMatch(matchIndex int) {
-    if e.searchState == nil || matchIndex < 0 || matchIndex >= len(e.searchState.matches) {
-        return
-    }
+	if e.searchState == nil || matchIndex < 0 || matchIndex >= len(e.searchState.matches) {
+		return
+	}
+	match := e.searchState.matches[matchIndex]
 
-    match := e.searchState.matches[matchIndex]
-    
-    if match.canvas != e.currentCanvas {
-        e.currentCanvas = match.canvas
-        e.syncCanvasToEditor()
-    }
+	// Переключаем канвас если нужно
+	if match.canvas != e.currentCanvas {
+		e.currentCanvas = match.canvas
+		e.syncCanvasToEditor()
+	}
 
-    e.cy = match.line
-    if e.cy >= len(e.lines) {
-        e.cy = len(e.lines) - 1
-    }
-    e.cx = match.start
-    
-    e.searchState.currentMatch = matchIndex
-    e.ensureVisible()
-    
-    e.statusMessage(fmt.Sprintf("Match %d/%d", matchIndex+1, len(e.searchState.matches)))
+	// Устанавливаем позицию курсора НАЧАЛО совпадения
+	e.cy = match.line
+	if e.cy < 0 {
+		e.cy = 0
+	}
+	if e.cy >= len(e.lines) {
+		e.cy = len(e.lines) - 1
+	}
+	if e.cy < 0 {
+		e.cy = 0
+	}
+
+	e.cx = match.start
+	// Защита: cx не может превышать длину строки
+	if e.cy < len(e.lines) {
+		lineRunes := []rune(e.lines[e.cy])
+		if e.cx > len(lineRunes) {
+			e.cx = len(lineRunes)
+		}
+		if e.cx < 0 {
+			e.cx = 0
+		}
+	}
+
+	e.searchState.currentMatch = matchIndex
+	e.ensureVisible()
+
+	// Для многострочного совпадения показываем диапазон строк
+	if match.endLine != match.line {
+		e.statusMessage(fmt.Sprintf("Match %d/%d [lines %d–%d]",
+			matchIndex+1, len(e.searchState.matches),
+			match.line+1, match.endLine+1))
+	} else {
+		e.statusMessage(fmt.Sprintf("Match %d/%d", matchIndex+1, len(e.searchState.matches)))
+	}
 }
 
 // nextMatch переходит к следующему совпадению
@@ -4096,3 +4187,124 @@ func (e *Editor) getScreenPosition(lineIdx, colIdx int) (int, int, bool) {
     
     return 0, 0, false
 }
+
+// posToLineCol конвертирует рунную позицию в склеенном тексте
+// в координаты (line, col). lines — исходные строки файла.
+func posToLineCol(lines []string, runePos int) (int, int) {
+	if runePos < 0 {
+		return 0, 0
+	}
+	remaining := runePos
+	for i, line := range lines {
+		lineLen := len([]rune(line)) + 1 // +1 для '\n'
+		if remaining < lineLen {
+			return i, remaining
+		}
+		remaining -= lineLen
+	}
+	// Позиция за пределами текста — конец последней строки
+	if len(lines) == 0 {
+		return 0, 0
+	}
+	lastIdx := len(lines) - 1
+	return lastIdx, len([]rune(lines[lastIdx]))
+}
+
+func normalizeForSearch(text string) (string, []int) {
+	runes := []rune(text)
+	var norm []rune
+	var mapping []int
+
+	i := 0
+	for i < len(runes) {
+		r := runes[i]
+		if r == '\n' {
+			norm = append(norm, '\n')
+			mapping = append(mapping, i)
+			i++
+		} else if r == ' ' || r == '\t' || r == '\r' {
+			wsStart := i
+			for i < len(runes) && (runes[i] == ' ' || runes[i] == '\t' || runes[i] == '\r') {
+				i++
+			}
+			// trailing whitespace (перед \n или конец текста) — пропускаем
+			if i >= len(runes) || runes[i] == '\n' {
+				continue
+			}
+			// иначе добавляем один пробел
+			norm = append(norm, ' ')
+			mapping = append(mapping, wsStart)
+		} else {
+			norm = append(norm, r)
+			mapping = append(mapping, i)
+			i++
+		}
+	}
+	return string(norm), mapping
+}
+
+// searchInJoinedText ищет pattern в тексте, склеенном из lines через "\n".
+// Нормализует whitespace (табы→пробелы, сжатие пробелов, удаление trailing),
+// чтобы корректно находить текст, скопированный из терминала.
+func searchInJoinedText(lines []string, pattern string, canvasNum int) []MatchPosition {
+	if pattern == "" {
+		return nil
+	}
+
+	joined := strings.Join(lines, "\n")
+
+	// Нормализуем текст и паттерн
+	normJoined, mapping := normalizeForSearch(joined)
+	normPattern, _ := normalizeForSearch(pattern)
+
+	if normPattern == "" {
+		return nil
+	}
+
+	normJoinedRunes := []rune(normJoined)
+	normPatternRunes := []rune(normPattern)
+
+	if len(normPatternRunes) == 0 || len(normJoinedRunes) < len(normPatternRunes) {
+		return nil
+	}
+
+	var matches []MatchPosition
+	i := 0
+	for i <= len(normJoinedRunes)-len(normPatternRunes) {
+		found := true
+		for j := 0; j < len(normPatternRunes); j++ {
+			if unicode.ToLower(normJoinedRunes[i+j]) != unicode.ToLower(normPatternRunes[j]) {
+				found = false
+				break
+			}
+		}
+		if found {
+			// Маппим нормализованные позиции в оригинальные
+			origStart := mapping[i]
+			origEndIdx := i + len(normPatternRunes)
+			var origEnd int
+			if origEndIdx < len(mapping) {
+				origEnd = mapping[origEndIdx]
+			} else {
+				origEnd = len([]rune(joined))
+			}
+
+			startLine, startCol := posToLineCol(lines, origStart)
+			endLine, endCol := posToLineCol(lines, origEnd)
+
+			matches = append(matches, MatchPosition{
+				line:    startLine,
+				start:   startCol,
+				end:     endCol,
+				endLine: endLine,
+				endCol:  endCol,
+				canvas:  canvasNum,
+			})
+			i += len(normPatternRunes)
+		} else {
+			i++
+		}
+	}
+	return matches
+}
+

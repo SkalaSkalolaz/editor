@@ -20,7 +20,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.0.9"
+const Version = "1.0.12"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.
@@ -117,10 +117,12 @@ type SearchState struct {
 }
 
 type MatchPosition struct {
-    line    int
-    start   int
-    end     int
-    canvas  int
+	line    int      
+	start   int          
+	end     int            
+	endLine int        
+	endCol  int        
+	canvas  int
 }
 
 type FileSelection struct {
@@ -925,30 +927,26 @@ func printVersion() {
 	fmt.Println("Editor version", Version)
 }
 
-// detectSystemLanguage возвращает код языка системы: "ru", "en" или "de"
+
 func detectSystemLanguage() string {
-	var candidates = []string{
-		os.Getenv("LANG"),
-		os.Getenv("LC_ALL"),
-		os.Getenv("LC_MESSAGES"),
-		os.Getenv("LANGUAGE"),
-	}
-	for _, v := range candidates {
-		if v == "" {
-			continue
-		}
-		lv := strings.ToLower(v)
-		if dot := strings.IndexByte(lv, '.'); dot != -1 {
-			lv = lv[:dot]
-		}
-		if strings.Contains(lv, "ru") {
-			return "ru"
-		}
-		if strings.Contains(lv, "en") {
-			return "en"
-		}
-	}
-	return "en"
+    // Проверить переменные окружения
+    lang := os.Getenv("LANG")
+    if lang == "" {
+        lang = os.Getenv("LANGUAGE")
+    }
+    if lang == "" {
+        lang = "en" // fallback
+    }
+    
+    // Извлечь базовый язык (например, "en" из "en_US.UTF-8")
+    if idx := strings.Index(lang, "."); idx != -1 {
+        lang = lang[:idx]
+    }
+    if idx := strings.Index(lang, "_"); idx != -1 {
+        lang = lang[:idx]
+    }
+    
+    return lang
 }
 
 // main is the entry point of the program.
