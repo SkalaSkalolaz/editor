@@ -20,7 +20,7 @@ import (
 
 // Version of the editor.
 // Версия редактора.
-const Version = "1.0.12"
+const Version = "1.0.13"
 
 // Editor represents the text editor state.
 // Editor представляет состояние текстового редактора.

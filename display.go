@@ -1917,6 +1917,7 @@ func (e *Editor) Run() error {
 		return err
 	}
 	defer s.Fini()
+	s.EnableMouse()
 	e.screen = s
 	e.refreshSize()
 	for !e.quit {
@@ -1927,6 +1928,8 @@ func (e *Editor) Run() error {
 			e.handleKey(tev)
 		case *tcell.EventResize:
 			e.refreshSize()
+		case *tcell.EventMouse:
+			e.handleMouse(tev)
 		}
 	}
 	return nil
@@ -4323,4 +4326,171 @@ func searchInJoinedText(lines []string, pattern string, canvasNum int) []MatchPo
 	}
 	return matches
 }
+// handleMouse обрабатывает события мыши
+func (e *Editor) handleMouse(ev *tcell.EventMouse) {
+	// Игнорируем мышь, если активен любой режим ввода (prompt, LLM, терминал)
+	if e.prompt != nil || e.multiLinePrompt != nil || e.terminalPrompt != nil {
+		return
+	}
 
+	btn := ev.Buttons()
+
+	// === ПРОКРУТКА КОЛЁСИКОМ ===
+	if btn&tcell.WheelUp != 0 {
+		e.scrollUp(3)
+		return
+	}
+	if btn&tcell.WheelDown != 0 {
+		e.scrollDown(3)
+		return
+	}
+
+	// Обрабатываем только левую кнопку мыши (нажатие)
+	if btn&tcell.Button1 == 0 {
+		return
+	}
+
+	x, y := ev.Position()
+
+	// Игнорируем клики в области статусбаров и служебных панелей
+	contentRows := e.contentHeight - 3
+	if y < 1 || y > contentRows {
+		return
+	}
+
+	// Игнорируем клики в панели номеров строк
+	if x < e.lineNumbersWidth {
+		return
+	}
+
+	// Игнорируем клики в панели структуры (справа)
+	if e.showStructurePanel && x >= e.contentWidth-e.structurePanelWidth {
+		return
+	}
+
+	// Завершаем активное выделение при клике
+	if e.selecting {
+		e.endSelection()
+	}
+
+	e.placeCursorAtScreenPos(x, y)
+	e.ensureVisible()
+	e.render()
+}
+
+// placeCursorAtScreenPos размещает курсор в позиции экранных координат (x, y)
+func (e *Editor) placeCursorAtScreenPos(screenX, screenY int) {
+	contentRows := e.contentHeight - 3
+	if screenY < 1 || screenY > contentRows {
+		return
+	}
+
+	// Строим буфер отображения (с учётом переноса строк)
+	display := e.buildDisplayBuffer()
+	if len(display) == 0 {
+		return
+	}
+
+	// Определяем индекс строки в буфере отображения
+	displayRow := screenY - 1 + e.offsetY
+	if displayRow < 0 {
+		displayRow = 0
+	}
+	if displayRow >= len(display) {
+		// Клик ниже текста — ставим курсор на последнюю строку
+		displayRow = len(display) - 1
+	}
+
+	row := display[displayRow]
+	lineIdx := row.lineIndex
+
+	if lineIdx < 0 || lineIdx >= len(e.lines) {
+		return
+	}
+
+	// Позиция в текстовой области (без панели номеров)
+	textX := screenX - e.lineNumbersWidth
+
+	// Находим начальную рунную позицию данного сегмента (wrapped part)
+	wrappedParts := e.wrapLine(e.lines[lineIdx])
+	segStartRune := 0
+	for s := 0; s < row.segIndex && s < len(wrappedParts); s++ {
+		segStartRune += len([]rune(wrappedParts[s]))
+	}
+
+	// Преобразуем экранную позицию в рунную с учётом табуляций и широких символов
+	segRunes := []rune(row.text)
+	cellPos := 0
+	runeOffset := 0
+	for i, r := range segRunes {
+		var rw int
+		if r == '\t' {
+			rw = 4 - (cellPos % 4)
+		} else {
+			rw = runewidth.RuneWidth(r)
+			if rw <= 0 {
+				rw = 1
+			}
+		}
+		// Если клик попал в зону данного символа или левее — останавливаемся
+		if cellPos+rw > textX {
+			break
+		}
+		cellPos += rw
+		runeOffset = i + 1
+	}
+
+	// Устанавливаем курсор
+	e.cy = lineIdx
+	e.cx = segStartRune + runeOffset
+
+	// Защита от выхода за пределы строки
+	lineRunes := []rune(e.lines[e.cy])
+	if e.cx > len(lineRunes) {
+		e.cx = len(lineRunes)
+	}
+	if e.cx < 0 {
+		e.cx = 0
+	}
+}
+
+// scrollUp прокручивает текст вверх, перемещая курсор на lines строк.
+func (e *Editor) scrollUp(lines int) {
+	if e.cy <= 0 {
+		return
+	}
+	e.cy -= lines
+	if e.cy < 0 {
+		e.cy = 0
+	}
+	// Ограничиваем cx длиной текущей строки
+	if e.cy < len(e.lines) {
+		lineRunes := []rune(e.lines[e.cy])
+		if e.cx > len(lineRunes) {
+			e.cx = len(lineRunes)
+		}
+	}
+	e.ensureVisible()
+	e.render()
+}
+
+// scrollDown прокручивает текст вниз, перемещая курсор на lines строк.
+func (e *Editor) scrollDown(lines int) {
+	lastLine := len(e.lines) - 1
+	if e.cy >= lastLine {
+		return
+	}
+	e.cy += lines
+	if e.cy > lastLine {
+		e.cy = lastLine
+	}
+	// Ограничиваем cx длиной текущей строки
+	if e.cy < len(e.lines) {
+		lineRunes := []rune(e.lines[e.cy])
+		if e.cx > len(lineRunes) {
+			e.cx = len(lineRunes)
+		}
+	}
+	e.ensureVisible()
+	e.render()
+}
