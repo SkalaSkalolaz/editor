@@ -1917,7 +1917,8 @@ func (e *Editor) Run() error {
 		return err
 	}
 	defer s.Fini()
-	s.EnableMouse()
+	// s.EnableMouse(tcell.MouseDraggingEvents)
+    s.EnableMouse()
 	e.screen = s
 	e.refreshSize()
 	for !e.quit {
@@ -4326,14 +4327,16 @@ func searchInJoinedText(lines []string, pattern string, canvasNum int) []MatchPo
 	}
 	return matches
 }
-// handleMouse обрабатывает события мыши
+
+// handleMouse обрабатывает события мыши: клики, drag-выделение и колёсико.
 func (e *Editor) handleMouse(ev *tcell.EventMouse) {
-	// Игнорируем мышь, если активен любой режим ввода (prompt, LLM, терминал)
+	// Игнорируем мышь, если активен любой режим ввода
 	if e.prompt != nil || e.multiLinePrompt != nil || e.terminalPrompt != nil {
 		return
 	}
 
 	btn := ev.Buttons()
+	x, y := ev.Position()
 
 	// === ПРОКРУТКА КОЛЁСИКОМ ===
 	if btn&tcell.WheelUp != 0 {
@@ -4345,37 +4348,55 @@ func (e *Editor) handleMouse(ev *tcell.EventMouse) {
 		return
 	}
 
-	// Обрабатываем только левую кнопку мыши (нажатие)
-	if btn&tcell.Button1 == 0 {
+	// === ЛЕВАЯ КНОПКА НАЖАТА ===
+	if btn&tcell.Button1 != 0 {
+		// Игнорируем события вне области контента
+		contentRows := e.contentHeight - 3
+		if y < 1 || y > contentRows {
+			return
+		}
+		if x < e.lineNumbersWidth {
+			return
+		}
+		if e.showStructurePanel && x >= e.contentWidth-e.structurePanelWidth {
+			return
+		}
+
+		if !e.mouseDragging {
+			// ---- Первое нажатие: начинаем выделение ----
+			e.mouseDragging = true
+
+			// Сбрасываем предыдущее выделение (если было)
+			e.selecting = false
+			e.lineSelecting = false
+
+			// Ставим курсор в точку клика
+			e.placeCursorAtScreenPos(x, y)
+
+			// Фиксируем начало выделения
+			e.selecting = true
+			e.selectStartX = e.cx
+			e.selectStartY = e.cy
+		} else {
+			// ---- Движение с зажатой кнопкой: обновляем конец выделения ----
+			e.placeCursorAtScreenPos(x, y)
+		}
+
+		e.ensureVisible()
+		e.render()
 		return
 	}
 
-	x, y := ev.Position()
+	// === ЛЕВАЯ КНОПКА ОТПУЩЕНА ===
+	if e.mouseDragging {
+		e.mouseDragging = false
 
-	// Игнорируем клики в области статусбаров и служебных панелей
-	contentRows := e.contentHeight - 3
-	if y < 1 || y > contentRows {
-		return
+		// Если выделение пустое (одиночный клик без движения) — сбрасываем
+		if e.selecting && e.selectStartX == e.cx && e.selectStartY == e.cy {
+			e.endSelection()
+		}
+		e.render()
 	}
-
-	// Игнорируем клики в панели номеров строк
-	if x < e.lineNumbersWidth {
-		return
-	}
-
-	// Игнорируем клики в панели структуры (справа)
-	if e.showStructurePanel && x >= e.contentWidth-e.structurePanelWidth {
-		return
-	}
-
-	// Завершаем активное выделение при клике
-	if e.selecting {
-		e.endSelection()
-	}
-
-	e.placeCursorAtScreenPos(x, y)
-	e.ensureVisible()
-	e.render()
 }
 
 // placeCursorAtScreenPos размещает курсор в позиции экранных координат (x, y)

@@ -70,6 +70,7 @@ type Editor struct {
 	lineNumbersWidth    int
 	showStructurePanel  bool
 	structurePanelWidth int
+	mouseDragging       bool
 	searchState      *SearchState
     lastSearchPattern string
 	projectFiles      []string               
