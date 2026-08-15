@@ -4348,6 +4348,26 @@ func (e *Editor) handleMouse(ev *tcell.EventMouse) {
 		return
 	}
 
+	// === ПРАВАЯ КНОПКА МЫШИ: КОНТЕКСТНОЕ ДЕЙСТВИЕ ===
+	if btn&tcell.Button2 != 0 {
+		contentRows := e.contentHeight - 3
+		if y < 1 || y > contentRows {
+			return
+		}
+		if x < e.lineNumbersWidth {
+			return
+		}
+		if e.showStructurePanel && x >= e.contentWidth-e.structurePanelWidth {
+			return
+		}
+		// Прерываем drag, если он был
+		if e.mouseDragging {
+			e.mouseDragging = false
+		}
+		e.handleRightClick(x, y)
+		return
+	}
+
 	// === ЛЕВАЯ КНОПКА НАЖАТА ===
 	if btn&tcell.Button1 != 0 {
 		// Игнорируем события вне области контента
@@ -4514,4 +4534,202 @@ func (e *Editor) scrollDown(lines int) {
 	}
 	e.ensureVisible()
 	e.render()
+}
+
+// handleRightClick определяет контекст под курсором и выполняет соответствующее действие.
+func (e *Editor) handleRightClick(x, y int) {
+	// Ставим курсор в точку клика
+	e.placeCursorAtScreenPos(x, y)
+
+	// Приоритет 1: если есть выделение — копируем
+	if e.selecting {
+		e.copySelectionToClipboard()
+		e.ensureVisible()
+		e.render()
+		return
+	}
+
+	// Приоритет 2: если курсор на скобке — переходим к парной
+	if e.tryJumpToMatchingBracket() {
+		e.ensureVisible()
+		e.render()
+		return
+	}
+
+	// Приоритет 3: если курсор на имени функции — показываем документацию
+	if e.showDocAtCursor() {
+		return // render() уже вызван внутри
+	}
+
+	// Приоритет 4: выделяем всю строку
+	e.selectEntireLine()
+	e.ensureVisible()
+	e.render()
+}
+
+// copySelectionToClipboard копирует выделенный текст (или текущую строку) в буфер обмена.
+func (e *Editor) copySelectionToClipboard() {
+	if e.selecting {
+		selectedText := e.getSelectedText()
+		if selectedText == "" {
+			return
+		}
+		e.clipboard = selectedText
+		if err := clipboard.WriteAll(selectedText); err != nil {
+			e.statusMessage("Copy error: " + err.Error())
+		} else {
+			lineCount := strings.Count(selectedText, "\n") + 1
+			e.statusMessage(fmt.Sprintf("Copied %d line(s) to clipboard", lineCount))
+		}
+	} else {
+		if e.cy >= 0 && e.cy < len(e.lines) {
+			curLine := e.lines[e.cy]
+			e.clipboard = curLine
+			if err := clipboard.WriteAll(curLine); err != nil {
+				e.statusMessage("Copy error: " + err.Error())
+			} else {
+				e.statusMessage("Copied current line to clipboard")
+			}
+		}
+	}
+}
+
+// tryJumpToMatchingBracket проверяет, находится ли курсор на скобке,
+// и если да — перемещает курсор к парной скобке. Возвращает true, если переход выполнен.
+func (e *Editor) tryJumpToMatchingBracket() bool {
+	if e.bracketMatcher == nil {
+		return false
+	}
+	if e.cy < 0 || e.cy >= len(e.lines) {
+		return false
+	}
+
+	lineRunes := []rune(e.lines[e.cy])
+
+	// Проверяем позицию под курсором и непосредственно перед ним
+	positions := []int{e.cx, e.cx - 1}
+	for _, pos := range positions {
+		if pos < 0 || pos >= len(lineRunes) {
+			continue
+		}
+		r := lineRunes[pos]
+		if r != '(' && r != ')' && r != '[' && r != ']' && r != '{' && r != '}' {
+			continue
+		}
+
+		pair := e.bracketMatcher.findMatchingBracket(e.cy, pos)
+		if pair == nil {
+			continue
+		}
+
+		// Определяем целевую позицию: если стоим на открывающей → прыгаем на закрывающую, и наоборот
+		var targetLine, targetCol int
+		if pair.OpenLine == e.cy && pair.OpenCol == pos {
+			targetLine = pair.CloseLine
+			targetCol = pair.CloseCol
+		} else {
+			targetLine = pair.OpenLine
+			targetCol = pair.OpenCol
+		}
+
+		e.cy = targetLine
+		e.cx = targetCol
+
+		// Подсвечиваем скобку, на которую перешли
+		if e.bracketHighlightState == nil {
+			e.bracketHighlightState = &BracketHighlightState{}
+		}
+		e.bracketHighlightState.active = true
+		e.bracketHighlightState.bracketPair = pair
+		e.bracketHighlightState.startTime = time.Now()
+
+		e.statusMessage(fmt.Sprintf("Jumped to matching bracket (line %d, col %d)", targetLine+1, targetCol+1))
+		return true
+	}
+	return false
+}
+
+// selectEntireLine выделяет всю текущую строку от начала до конца.
+func (e *Editor) selectEntireLine() {
+	if e.cy < 0 || e.cy >= len(e.lines) {
+		return
+	}
+	e.selecting = true
+	e.lineSelecting = false
+	e.selectStartY = e.cy
+	e.selectStartX = 0
+	e.cx = len([]rune(e.lines[e.cy]))
+	e.statusMessage(fmt.Sprintf("Selected line %d", e.cy+1))
+}
+
+// showDocAtCursor определяет, находится ли курсор на имени функции,
+// и показывает всплывающую подсказку с документацией. Возвращает true, если подсказка показана.
+func (e *Editor) showDocAtCursor() bool {
+	if e.cy < 0 || e.cy >= len(e.lines) {
+		return false
+	}
+	if e.language == LangUnknown {
+		return false
+	}
+
+	line := e.lines[e.cy]
+	runes := []rune(line)
+	if e.cx >= len(runes) {
+		return false
+	}
+
+	// --- Шаг 1: Извлекаем слово под курсором ---
+	start := e.cx
+	for start > 0 && (unicode.IsLetter(runes[start-1]) || unicode.IsDigit(runes[start-1]) || runes[start-1] == '_') {
+		start--
+	}
+	end := e.cx
+	for end < len(runes) && (unicode.IsLetter(runes[end]) || unicode.IsDigit(runes[end]) || runes[end] == '_') {
+		end++
+	}
+	if start >= end {
+		return false
+	}
+	name := string(runes[start:end])
+	if name == "" {
+		return false
+	}
+
+	// --- Шаг 2: Проверяем, похоже ли слово на вызов функции ---
+	// Ищем '(' после слова (с возможными пробелами/табами)
+	afterWord := end
+	for afterWord < len(runes) && (runes[afterWord] == ' ' || runes[afterWord] == '\t') {
+		afterWord++
+	}
+	looksLikeCall := afterWord < len(runes) && runes[afterWord] == '('
+
+	// --- Шаг 3: Ищем документацию во всех канвасах ---
+	shortDoc, fullDoc := e.findFunctionDocWithFullDescription(e.language, name)
+
+	// --- Шаг 4: Формируем и показываем подсказку ---
+	if e.funcDocHint == nil {
+		e.funcDocHint = &FunctionDocHint{}
+	}
+	e.funcDocHint.startTime = time.Now()
+	e.funcDocHint.startCX = start
+	e.funcDocHint.active = true
+
+	if shortDoc == "" && fullDoc == "" {
+		if !looksLikeCall {
+			// Слово не похоже на функцию и документация не найдена — не показываем
+			e.funcDocHint.active = false
+			return false
+		}
+		// Это вызов функции, но определение не найдено
+		e.funcDocHint.content = ""
+		e.funcDocHint.fullContent = ""
+		e.funcDocHint.message = fmt.Sprintf("Function '%s': definition not found in project", name)
+	} else {
+		e.funcDocHint.content = shortDoc
+		e.funcDocHint.fullContent = fullDoc
+		e.funcDocHint.message = ""
+	}
+
+	e.render()
+	return true
 }
