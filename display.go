@@ -3764,9 +3764,15 @@ func (e *Editor) findInCurrentCanvas(pattern string) {
 		active:         true,
 		projectMatches: make(map[string]int),
 	}
-
+	
+	// 1. Сначала пытаемся найти точное (нормализованное) совпадение
 	e.searchState.matches = searchInJoinedText(e.lines, pattern, e.currentCanvas)
-
+	
+	// 2. Если не найдено, используем "нечеткий" поиск (игнорирует пустые строки и лишние пробелы)
+	if len(e.searchState.matches) == 0 {
+		e.searchState.matches = searchInJoinedTextFuzzy(e.lines, pattern, e.currentCanvas)
+	}
+	
 	if len(e.searchState.matches) > 0 {
 		e.searchState.projectMatches[e.filename] = len(e.searchState.matches)
 		e.jumpToMatch(0)
@@ -3779,50 +3785,65 @@ func (e *Editor) findInCurrentCanvas(pattern string) {
 // findInAllCanvases ищет текст во всех канвасах проекта.
 // Если поиск выполняется со страницы PROJECT OVERVIEW, сама страница overview пропускается.
 func (e *Editor) findInAllCanvases(pattern string) {
-    if pattern == "" {
-        return
-    }
-
-    e.searchState = &SearchState{
-        pattern:        pattern,
-        matches:        make([]MatchPosition, 0),
-        currentMatch:   0,
-        active:         true,
-        projectMatches: make(map[string]int),
-        matchedFiles:   make([]string, 0),
-    }
-
-    for canvasNum, canvas := range e.canvases {
-        // Если пользователь ищет со страницы PROJECT OVERVIEW,
-        // саму эту страницу не учитываем как файл проекта.
-        if e.inProjectOverview && canvasNum == e.currentCanvas && e.isProjectOverviewCanvas(canvas) {
-            continue
-        }
-
-        canvasMatches := searchInJoinedText(canvas.lines, pattern, canvasNum)
-        if len(canvasMatches) > 0 {
-            e.searchState.matches = append(e.searchState.matches, canvasMatches...)
-
-            filename := canvas.filename
-            if filename == "" {
-                filename = fmt.Sprintf("Canvas %d", canvasNum)
-            } else {
-                filename = filepath.Base(filename)
-            }
-
-            e.searchState.projectMatches[filename] = len(canvasMatches)
-            e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
-        }
-    }
-
-    if len(e.searchState.matches) > 0 {
-        e.statusMessage(fmt.Sprintf("Found %d matches in %d files",
-            len(e.searchState.matches), len(e.searchState.projectMatches)))
-        e.jumpToMatch(0)
-    } else {
-        e.statusMessage("No matches found")
-        e.searchState.active = false
-    }
+	if pattern == "" {
+		return
+	}
+	e.searchState = &SearchState{
+		pattern:        pattern,
+		matches:        make([]MatchPosition, 0),
+		currentMatch:   0,
+		active:         true,
+		projectMatches: make(map[string]int),
+		matchedFiles:   make([]string, 0),
+	}
+	
+	// 1. Прямой поиск по всем канвасам
+	for canvasNum, canvas := range e.canvases {
+		if e.inProjectOverview && canvasNum == e.currentCanvas && e.isProjectOverviewCanvas(canvas) {
+			continue
+		}
+		canvasMatches := searchInJoinedText(canvas.lines, pattern, canvasNum)
+		if len(canvasMatches) > 0 {
+			e.searchState.matches = append(e.searchState.matches, canvasMatches...)
+			filename := canvas.filename
+			if filename == "" {
+				filename = fmt.Sprintf("Canvas %d", canvasNum)
+			} else {
+				filename = filepath.Base(filename)
+			}
+			e.searchState.projectMatches[filename] = len(canvasMatches)
+			e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
+		}
+	}
+	
+	// 2. Если ничего не найдено, запускаем нечеткий поиск (fuzzy) по всем файлам
+	if len(e.searchState.matches) == 0 {
+		for canvasNum, canvas := range e.canvases {
+			if e.inProjectOverview && canvasNum == e.currentCanvas && e.isProjectOverviewCanvas(canvas) {
+				continue
+			}
+			canvasMatches := searchInJoinedTextFuzzy(canvas.lines, pattern, canvasNum)
+			if len(canvasMatches) > 0 {
+				e.searchState.matches = append(e.searchState.matches, canvasMatches...)
+				filename := canvas.filename
+				if filename == "" {
+					filename = fmt.Sprintf("Canvas %d", canvasNum)
+				} else {
+					filename = filepath.Base(filename)
+				}
+				e.searchState.projectMatches[filename] = len(canvasMatches)
+				e.searchState.matchedFiles = append(e.searchState.matchedFiles, filename)
+			}
+		}
+	}
+		if len(e.searchState.matches) > 0 {
+		e.statusMessage(fmt.Sprintf("Found %d matches in %d files",
+			len(e.searchState.matches), len(e.searchState.projectMatches)))
+		e.jumpToMatch(0)
+	} else {
+		e.statusMessage("No matches found")
+		e.searchState.active = false
+	}
 }
 
 // jumpToMatch переходит к указанному совпадению
@@ -4312,6 +4333,100 @@ func searchInJoinedText(lines []string, pattern string, canvasNum int) []MatchPo
 			startLine, startCol := posToLineCol(lines, origStart)
 			endLine, endCol := posToLineCol(lines, origEnd)
 
+			matches = append(matches, MatchPosition{
+				line:    startLine,
+				start:   startCol,
+				end:     endCol,
+				endLine: endLine,
+				endCol:  endCol,
+				canvas:  canvasNum,
+			})
+			i += len(normPatternRunes)
+		} else {
+			i++
+		}
+	}
+	return matches
+}
+
+// normalizeForSearchFuzzy нормализует текст для "нечеткого" поиска,
+// схлопывая любые последовательности пробельных символов (включая \n, \t, \r) в один пробел.
+// Игнорирует пробельные символы в самом начале и в конце текста.
+func normalizeForSearchFuzzy(text string) (string, []int) {
+	runes := []rune(text)
+	var norm []rune
+	var mapping []int
+	i := 0
+	for i < len(runes) {
+		r := runes[i]
+		if r == ' ' || r == '\t' || r == '\r' || r == '\n' {
+			wsStart := i
+			for i < len(runes) && (runes[i] == ' ' || runes[i] == '\t' || runes[i] == '\r' || runes[i] == '\n') {
+				i++
+			}
+			// Если это завершающие пробелы (конец текста), пропускаем их
+			if i >= len(runes) {
+				continue
+			}
+			// Добавляем один пробел, если это не самый первый символ (игнорируем leading whitespace)
+			if len(norm) > 0 {
+				norm = append(norm, ' ')
+				mapping = append(mapping, wsStart)
+			}
+		} else {
+			norm = append(norm, r)
+			mapping = append(mapping, i)
+			i++
+		}
+	}
+	return string(norm), mapping
+}
+
+// searchInJoinedTextFuzzy ищет pattern в тексте с игнорированием различий в форматировании
+// (схлопывает пустые строки, табы и лишние пробелы).
+func searchInJoinedTextFuzzy(lines []string, pattern string, canvasNum int) []MatchPosition {
+	if pattern == "" {
+		return nil
+	}
+	joined := strings.Join(lines, "\n")
+	
+	normJoined, mapping := normalizeForSearchFuzzy(joined)
+	normPattern, _ := normalizeForSearchFuzzy(pattern)
+	
+	if normPattern == "" {
+		return nil
+	}
+	
+	normJoinedRunes := []rune(normJoined)
+	normPatternRunes := []rune(normPattern)
+	
+	if len(normPatternRunes) == 0 || len(normJoinedRunes) < len(normPatternRunes) {
+		return nil
+	}
+	
+	var matches []MatchPosition
+	i := 0
+	for i <= len(normJoinedRunes)-len(normPatternRunes) {
+		found := true
+		for j := 0; j < len(normPatternRunes); j++ {
+			if unicode.ToLower(normJoinedRunes[i+j]) != unicode.ToLower(normPatternRunes[j]) {
+				found = false
+				break
+			}
+		}
+		if found {
+			origStart := mapping[i]
+			origEndIdx := i + len(normPatternRunes)
+			var origEnd int
+			if origEndIdx < len(mapping) {
+				origEnd = mapping[origEndIdx]
+			} else {
+				origEnd = len([]rune(joined))
+			}
+			
+			startLine, startCol := posToLineCol(lines, origStart)
+			endLine, endCol := posToLineCol(lines, origEnd)
+			
 			matches = append(matches, MatchPosition{
 				line:    startLine,
 				start:   startCol,
