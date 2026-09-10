@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)  
 [![Go Version](https://img.shields.io/badge/go-1.25.1-blue.svg)](https://golang.org/dl/)
 
-Version: **1.0.14**
+Version: **1.0.16**
 ![Editor's screenshot](Editor.png)
 
 ## Project Description
@@ -20,7 +20,7 @@ Code Editor GO is a console text editor for professional development with suppor
 - Search (single-line and multi-line), mass replacement, switching to a line, commenting on a block/line.
 - Search normalization: whitespace-insensitive matching (tabs, multiple spaces, trailing whitespace).
 - Project-wide search across all canvases with `/all` modifier.
-- Multiple "canvases" (working buffers) within the same session (up to 100).
+- Multiple "canvases" (working buffers) within the same session (up to 1000).
 - Support for working with GitHub projects: ZIP cloning, structure overview, commit/push (Ctrl-P).
 - Translation of text or selected code into any language with replacement (Ctrl-W).
 - Code autocompletion (context of 30 lines before the cursor and 10 after) is triggered by pressing Tab after a word.

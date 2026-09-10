@@ -14,7 +14,7 @@ import (
 )
 
 // Максимальное количество канвасов
-const MaxCanvases = 100
+const MaxCanvases = 1000
 
 // Canvas представляет отдельный канвас редактора.
 // Canvas represents a separate editor canvas.
